@@ -8,6 +8,14 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `hub.py`: the integration owns the serial link (open, decode, send, reconnect
+  with backoff, inferred relay and button states, listeners). The `biomatx`
+  package is now used only as a data model. Frames for unknown modules or
+  buttons (bus collisions) are counted and logged at debug level, never as
+  errors. Observing the configured all-off scenario on the bus marks every
+  relay off.
+- Test fake for the serial link (`tests/fake_serial.py`) and frames captured on
+  a real bus (`tests/frames.py`); `tests/test_hub.py` covers the hub fully.
 - `hacs.json` so the repository can be installed as a HACS custom repository.
 - Development tooling: `pyproject.toml` (ruff, pytest), `requirements_dev.txt`,
   `scripts/setup`, `scripts/lint`, `scripts/test`, pre-commit hooks.
