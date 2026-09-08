@@ -95,3 +95,24 @@ def test_only_one_integration_in_custom_components() -> None:
         if path.is_dir() and not path.name.startswith(("_", "."))
     ]
     assert integrations == [INTEGRATION_DIR]
+
+
+def _leaf_keys(node: object, prefix: str = "") -> set[str]:
+    if not isinstance(node, dict):
+        return {prefix}
+    return set().union(
+        *(_leaf_keys(value, f"{prefix}.{key}") for key, value in node.items())
+    )
+
+
+def test_translation_files_have_identical_key_sets() -> None:
+    """A key present in en.json but not in fr.json shows up raw in a French UI."""
+    translations = INTEGRATION_DIR / "translations"
+    english = json.loads((translations / "en.json").read_text())
+    french = json.loads((translations / "fr.json").read_text())
+    assert _leaf_keys(english) == _leaf_keys(french)
+
+
+def test_no_strings_json_in_custom_integration() -> None:
+    """Home Assistant forbids strings.json for custom integrations."""
+    assert not (INTEGRATION_DIR / "strings.json").exists()

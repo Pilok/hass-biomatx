@@ -1,79 +1,78 @@
-"""Manages light entities for the BiomatX integration."""
-import biomatx
+"""Light platform: one assumed-state light per BioMatX relay."""
 
-from asyncio import Lock
-from homeassistant.components.light import (
-    ColorMode,
-    LightEntity,
-    LightEntityDescription
-)
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from __future__ import annotations
 
-from .const import _LOGGER, DOMAIN
+from typing import TYPE_CHECKING, Any
+
+from homeassistant.components.light import ColorMode, LightEntity
+from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.restore_state import RestoreEntity
+
+from .const import DOMAIN
 from .entity import BiomatxEntity
+from .hub import BiomatxLinkError
 
-lock = Lock()
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+
+    import biomatx
+
+    from . import BiomatxConfigEntry
+
+# Commands are serialised by the hub's own lock; no platform-level limit needed.
+PARALLEL_UPDATES = 0
+
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
-) -> bool:
-    """Setups light entities."""
-    bus = hass.data[DOMAIN][entry.entry_id]
-    entities = [BiomatxLight(relay) for relay in bus.relays]
-    _LOGGER.debug(f"setting up {len(entities)} BiomatX lights")
-    async_add_entities(entities, True)
-    return True
+    hass: HomeAssistant,  # noqa: ARG001  # HA signature
+    entry: BiomatxConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> None:
+    """Create one light per relay of the configured modules."""
+    async_add_entities(
+        BiomatxLight(entry, relay) for relay in entry.runtime_data.hub.relays
+    )
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Tear down light entities."""
-    return True
+class BiomatxLight(BiomatxEntity, LightEntity, RestoreEntity):
+    """A relay driven by simulated button presses; its state is inferred."""
 
+    _attr_assumed_state = True
+    _attr_color_mode = ColorMode.ONOFF
+    _attr_supported_color_modes = frozenset({ColorMode.ONOFF})
+    _attr_translation_key = "relay"
 
-class BiomatxLight(BiomatxEntity, LightEntity):
-    """BiomatX light device."""
-
-    entity_description: LightEntityDescription
-
-    def __init__(self, device: biomatx.Relay):
-        """Initialize a light device."""
-        super().__init__(device)
-        self._attr_color_mode = ColorMode.ONOFF
-        self._attr_supported_color_modes = { ColorMode.ONOFF }
-
+    def __init__(self, entry: BiomatxConfigEntry, relay: biomatx.Relay) -> None:
+        """Bind the light to ``relay``."""
+        super().__init__(entry, relay.module, relay.address, "relay")
+        self._relay = relay
 
     @property
-    def is_on(self):
-        """Return true if light is on."""
-        return self.biomatx_device.on
+    def is_on(self) -> bool:
+        """Return the inferred relay state."""
+        return self._relay.on
 
-    async def async_turn_on(self, **kwargs):
-        """Turn device on."""
-        _LOGGER.debug(f"waiting to turn {self} on")
-        async with lock:
-            _LOGGER.debug(f"turning {self} on")
-            if self.is_on:
-                return
+    async def async_added_to_hass(self) -> None:
+        """Restore the last known state before following the bus: it cannot tell us."""
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state in (STATE_ON, STATE_OFF):
+            self._relay.on = last_state.state == STATE_ON
+        await super().async_added_to_hass()
 
-            await self.biomatx_device.toggle()
+    async def async_turn_on(self, **kwargs: Any) -> None:  # noqa: ARG002  # HA signature
+        """Press the button unless the relay is already believed on."""
+        await self._async_set(on=True)
 
-        self.async_write_ha_state()
+    async def async_turn_off(self, **kwargs: Any) -> None:  # noqa: ARG002  # HA signature
+        """Press the button unless the relay is already believed off."""
+        await self._async_set(on=False)
 
-    async def async_turn_off(self, **kwargs):
-        """Turn device off."""
-        _LOGGER.debug(f"waiting to turn {self} off")
-        async with lock:
-            _LOGGER.debug(f"turning {self} off")
-
-            if not self.is_on:
-                return
-
-            await self.biomatx_device.toggle()
-
-        self.async_write_ha_state()
-
-    def reset(self):
-        """Set the physical to the assumed state."""
-        self.biomatx_device.force_toggle()
+    async def _async_set(self, *, on: bool) -> None:
+        try:
+            await self._hub.async_set_relay(self._relay, on=on)
+        except BiomatxLinkError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="link_down"
+            ) from err
