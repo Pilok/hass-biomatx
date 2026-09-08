@@ -14,13 +14,10 @@ from custom_components.biomatx.const import CONF_MODULE_COUNT, DOMAIN
 from .conftest import MODULE_COUNT, URL
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
     from homeassistant.core import HomeAssistant
 
+    from .conftest import SetupIntegration
     from .fake_serial import FakeSerialLink
-
-type SetupIntegration = Callable[[MockConfigEntry], Awaitable[MockConfigEntry]]
 
 
 async def test_setup_entry_loads_and_opens_port(
