@@ -91,6 +91,12 @@ class FakeSerialLink:
         self.writer = FakeStreamWriter(self, self.reader)
         return self.reader, self.writer
 
+    async def open_tcp_connection(
+        self, host: str, port: int
+    ) -> tuple[asyncio.StreamReader, FakeStreamWriter]:
+        """Mimic ``asyncio.open_connection`` for ``socket://`` gateways."""
+        return await self.open_serial_connection(url=f"socket://{host}:{port}")
+
     def feed(self, hex_frames: str) -> None:
         """Make bytes arrive on the bus, e.g. ``feed("50 00 50 80")``."""
         if self.reader is None:

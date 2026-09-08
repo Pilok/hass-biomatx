@@ -28,13 +28,11 @@ from .conftest import MODULE_COUNT
 from .fake_serial import settle
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
     from homeassistant.core import HomeAssistant
 
+    from .conftest import SetupIntegration
     from .fake_serial import FakeSerialLink
 
-type SetupIntegration = Callable[[MockConfigEntry], Awaitable[MockConfigEntry]]
 
 M1_R1 = "light.biomatx_module_1_relay_1"
 M1_R8 = "light.biomatx_module_1_relay_8"

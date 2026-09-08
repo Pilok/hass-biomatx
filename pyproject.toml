@@ -5,11 +5,6 @@
 [tool.ruff]
 target-version = "py314"
 line-length = 88
-# Legacy upstream modules are excluded until each one is rewritten under test
-# (one pull request per module, see AGENTS.md). New code is always linted.
-extend-exclude = [
-    "custom_components/biomatx/config_flow.py",
-]
 
 [tool.ruff.lint]
 select = ["ALL"]

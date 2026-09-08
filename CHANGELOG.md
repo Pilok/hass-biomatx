@@ -8,6 +8,13 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Config flow rewritten: the serial device is opened once before the entry is
+  created (`cannot_connect` error otherwise), the device is the unique id of
+  the entry (a second entry for the same adapter is refused), the module count
+  is bounded to 1-7 and the "all off" scenario is entered as its 1-based number
+  (stored 0-based). Reconfiguration changes the device, the module count or the
+  scenario in place; entities keep their identifiers. The inert `serial_wait`
+  field is gone.
 - Config entry lifecycle rewritten for Home Assistant 2026: typed
   `entry.runtime_data`, awaited platform setup and unload, reader loop as an
   entry background task started once the entities exist, `ConfigEntryNotReady`

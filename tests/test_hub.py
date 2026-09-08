@@ -24,12 +24,11 @@ from custom_components.biomatx.hub import (
 )
 
 from . import frames
+from .conftest import URL
 from .fake_serial import FakeSerialLink, settle
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
-
-URL = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_TEST-if00-port0"
 
 
 def make_hub(module_count: int = 4, all_off_address: int | None = None) -> BiomatxHub:

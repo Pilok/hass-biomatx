@@ -33,6 +33,8 @@ import serial_asyncio
 import biomatx
 from biomatx import SCENARIO_MODULE_ADDRESS, Packet
 
+from .const import RELAYS_PER_MODULE
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
@@ -46,7 +48,7 @@ RECONNECT_DELAYS: tuple[float, ...] = (1, 2, 5, 10, 30, 60)
 CLOSE_TIMEOUT = 2
 """Seconds to wait for the reader task and the transport to finish closing."""
 READ_CHUNK = 64
-MAX_SWITCH_ADDRESS = 9
+MAX_SWITCH_ADDRESS = RELAYS_PER_MODULE - 1
 START_NIBBLES = (0x50, 0xA0)
 """High nibbles that open a frame; the low nibble is the emitting module."""
 SOCKET_URL_PREFIX = "socket://"
