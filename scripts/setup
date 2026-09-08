@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Create the local virtual environment and install the development dependencies.
+# Requires Python >= 3.14.2 (the version Home Assistant 2026.9 runs on).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+PYTHON="${PYTHON:-python3.14}"
+if [ ! -d .venv ]; then
+    "$PYTHON" -m venv .venv
+fi
+.venv/bin/pip install --quiet --upgrade pip
+.venv/bin/pip install --quiet --requirement requirements_dev.txt
+.venv/bin/pre-commit install --install-hooks >/dev/null
+echo "Environment ready: $(.venv/bin/python --version), Home Assistant $(.venv/bin/python -c 'import homeassistant.const as c; print(c.__version__)')"

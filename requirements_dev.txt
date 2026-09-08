@@ -1,0 +1,7 @@
+# Development and test dependencies. The runtime dependency of the integration
+# is declared once, in custom_components/biomatx/manifest.json.
+homeassistant==2026.9.1
+pytest-homeassistant-custom-component==0.13.364
+biomatx==0.0.8
+ruff==0.15.21
+pre-commit==4.6.2

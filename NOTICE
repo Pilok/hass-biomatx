@@ -1,0 +1,13 @@
+hass-biomatx
+Home Assistant integration for BioMatX 2110 lighting modules.
+
+Copyright 2024-2025 Damien Merenne (original work, https://github.com/canatella/hass-biomatx)
+Copyright 2026 Benoit Rondeux (modifications, https://github.com/pilok/hass-biomatx)
+
+Licensed under the Apache License, Version 2.0 (see the LICENSE file).
+
+This repository is a fork of canatella/hass-biomatx. Modifications since
+September 2026 include HACS packaging, Home Assistant 2026 compatibility,
+an in-integration serial hub, tests and continuous integration. The bus
+protocol was decoded by Damien Merenne (https://github.com/canatella/pybiomatx,
+MIT licence).
