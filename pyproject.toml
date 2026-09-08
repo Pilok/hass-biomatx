@@ -1,0 +1,57 @@
+# Tooling configuration for the hass-biomatx custom integration.
+# The integration itself is not a Python package: Home Assistant loads it from
+# custom_components/biomatx/ and HACS ships that directory as-is.
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+# Legacy upstream modules are excluded until each one is rewritten under test
+# (one pull request per module, see AGENTS.md). New code is always linted.
+extend-exclude = [
+    "custom_components/biomatx/__init__.py",
+    "custom_components/biomatx/binary_sensor.py",
+    "custom_components/biomatx/bus.py",
+    "custom_components/biomatx/config_flow.py",
+    "custom_components/biomatx/const.py",
+    "custom_components/biomatx/entity.py",
+    "custom_components/biomatx/light.py",
+]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "ANN401", # typing.Any is legitimate for Home Assistant callback payloads
+    "D203",   # incompatible with the formatter (blank line before class docstring)
+    "D212",   # incompatible with the formatter (multi-line summary first line)
+    "COM812", # incompatible with the formatter (trailing commas)
+    "ISC001", # incompatible with the formatter (implicit string concatenation)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",    # assert is the pytest idiom
+    "PLR2004", # magic values are expected in test data
+    "SLF001",  # tests may inspect private attributes
+    "ARG001",  # pytest fixtures are injected by name, not always used
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["custom_components.biomatx"]
+force-sort-within-sections = true
+combine-as-imports = true
+
+[tool.ruff.lint.flake8-pytest-style]
+fixture-parentheses = false
+
+[tool.ruff.lint.pyupgrade]
+keep-runtime-typing = true
+
+[tool.ruff.lint.mccabe]
+max-complexity = 25
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "--cov=custom_components/biomatx --cov-report=term-missing"
