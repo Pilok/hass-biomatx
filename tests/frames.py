@@ -31,6 +31,10 @@ ORPHAN_START_BYTE = "50"
 SCENARIO_6_PRESS = "57 75"
 SCENARIO_6_RELEASE = "57 f5"
 
+# Scenario 4 (button index 3): any scenario other than the all-off one.
+SCENARIO_4_PRESS = "57 73"
+SCENARIO_4_RELEASE = "57 f3"
+
 # Module 7 is the scenario module; module 6 exists nowhere on a 4-module bus.
 UNCONFIGURED_MODULE_PRESS = "56 60"
 

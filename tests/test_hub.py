@@ -9,12 +9,14 @@ reconnects when the link drops.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING
 
 import pytest
 from serial import SerialException
 import serial_asyncio
 
+from custom_components.biomatx import hub as hub_module
 from custom_components.biomatx.hub import (
     BiomatxConnectionError,
     BiomatxHub,
@@ -61,7 +63,7 @@ async def running(fake_serial: FakeSerialLink) -> AsyncIterator[BiomatxHub]:
     await settle()
     yield hub
     await hub.async_close()
-    await task
+    await asyncio.wait_for(task, timeout=2)
 
 
 def recorder(events: list[str], label: str) -> Callable[[], None]:
@@ -171,6 +173,7 @@ async def test_frame_with_switch_above_nine_is_dropped_and_counted(
     await settle()
     assert all(relay.on is False for relay in running.relays)
     assert running.frames_dropped == 1
+    assert running.bytes_dropped == 0
 
 
 async def test_frame_for_unconfigured_module_is_dropped(
@@ -200,7 +203,8 @@ async def test_orphan_byte_desyncs_one_frame_then_resyncs(
     await settle()
     assert running.relay(0, 0).on is False
     assert running.relay(1, 7).on is True
-    assert running.frames_dropped >= 1
+    assert running.frames_dropped == 1  # "50 50" targets module 6, unconfigured
+    assert running.bytes_dropped == 1  # the stray "00"
 
 
 async def test_scenario_frame_updates_scenario_switch(
@@ -287,7 +291,7 @@ async def test_write_failure_marks_link_down_and_raises(
     """An I/O error while writing is a lost link, reported to the caller."""
     link_events: list[bool] = []
     running.add_link_listener(link_events.append)
-    fake_serial.fail_write = OSError("write failed")
+    fake_serial.fail_write_at = 0
     with pytest.raises(BiomatxLinkError):
         await running.async_toggle(running.relay(0, 0))
     assert running.connected is False
@@ -381,7 +385,7 @@ async def test_send_while_link_down_raises_without_writing(
     running: BiomatxHub, fake_serial: FakeSerialLink
 ) -> None:
     """While disconnected, a command fails fast instead of touching a dead port."""
-    fake_serial.fail_write = OSError("write failed")
+    fake_serial.fail_write_at = 0
     with pytest.raises(BiomatxLinkError):
         await running.async_toggle(running.relay(0, 0))
     fake_serial.clear()
@@ -467,3 +471,288 @@ async def test_reconnection_retries_until_the_port_reopens(
     await settle(50)
     assert running.connected is True
     assert len(fake_serial.opens) == 3
+
+
+# --- findings of the 2026-09-08 review ------------------------------------------
+
+
+async def test_frame_split_across_two_reads_is_decoded(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """At 19200 baud the two bytes of a frame often arrive in separate reads."""
+    fake_serial.feed(frames.PRESS_M1_R1[:2])
+    await settle()
+    assert running.relay(0, 0).on is False
+    fake_serial.feed(frames.PRESS_M1_R1[3:])
+    await settle()
+    assert running.relay(0, 0).on is True
+    assert running.frames_dropped == 0
+    assert running.bytes_dropped == 0
+
+
+async def test_other_scenario_press_does_not_clear_relays(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """Only the configured all-off scenario resets the inferred states."""
+    fake_serial.feed(frames.PRESS_M1_R1 + frames.RELEASE_M1_R1)
+    await settle()
+    fake_serial.feed(frames.SCENARIO_4_PRESS + frames.SCENARIO_4_RELEASE)
+    await settle()
+    assert running.relay(0, 0).on is True
+    assert running.switch(7, 3).pressed is False
+
+
+async def test_garbage_run_is_counted_and_logged_once(
+    running: BiomatxHub,
+    fake_serial: FakeSerialLink,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A burst of line noise produces one debug record, not one per byte."""
+    caplog.set_level(logging.DEBUG, logger="custom_components.biomatx.hub")
+    fake_serial.feed("00 " * 40 + frames.PRESS_M1_R1)
+    await settle()
+    assert running.bytes_dropped == 40
+    assert running.relay(0, 0).on is True
+    noise_records = [r for r in caplog.records if "outside a frame" in r.getMessage()]
+    assert len(noise_records) == 1
+    assert "40" in noise_records[0].getMessage()
+
+
+async def test_listener_exception_does_not_stop_the_reader(
+    running: BiomatxHub,
+    fake_serial: FakeSerialLink,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A misbehaving entity callback must not kill the bus reader."""
+
+    def _boom() -> None:
+        msg = "entity gone"
+        raise RuntimeError(msg)
+
+    running.add_listener(("relay", 0, 0), _boom)
+    fake_serial.feed(frames.PRESS_M1_R1 + frames.PRESS_M2_R8)
+    await settle()
+    assert running.relay(0, 0).on is True
+    assert running.relay(1, 7).on is True
+    assert running.frames_received == 2
+    assert running.connected is True
+    assert any("entity gone" in r.getMessage() or r.exc_info for r in caplog.records)
+
+
+async def test_toggle_flips_state_as_soon_as_the_press_is_written(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """The module acts on the press frame: a failed release must not undo the flip."""
+    fake_serial.fail_write_at = 1
+    with pytest.raises(BiomatxLinkError):
+        await running.async_toggle(running.relay(0, 0))
+    assert fake_serial.frames_written() == [frames.PRESS_M1_R1]
+    assert running.relay(0, 0).on is True
+    assert running.connected is False
+
+
+async def test_send_on_closing_writer_raises_without_writing(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """A transport that is closing never reports write errors: check it first."""
+    assert fake_serial.writer is not None
+    fake_serial.writer.closed = True
+    with pytest.raises(BiomatxLinkError):
+        await running.async_toggle(running.relay(0, 0))
+    assert fake_serial.frames_written() == []
+    assert running.relay(0, 0).on is False
+
+
+async def test_activate_all_off_scenario_marks_relays_off(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """Sending the all-off scenario has the same effect as observing it."""
+    fake_serial.feed(frames.PRESS_M1_R1)
+    await settle()
+    await running.async_activate_scenario(5)
+    assert all(relay.on is False for relay in running.relays)
+
+
+async def test_reset_failing_midway_leaves_a_consistent_state(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """After the all-off scenario every relay is off until its press succeeds."""
+    fake_serial.feed(frames.PRESS_M1_R1 + frames.PRESS_M2_R8)
+    await settle()
+    fake_serial.clear()
+    fake_serial.fail_write_at = (
+        4  # scenario (2 writes), relay 1 (2 writes), relay 2 press
+    )
+    with pytest.raises(BiomatxLinkError):
+        await running.async_reset()
+    assert running.relay(0, 0).on is True
+    assert running.relay(1, 7).on is False
+
+
+async def test_backoff_only_resets_once_data_has_been_read(
+    fake_serial: FakeSerialLink,
+) -> None:
+    """A port that opens then drops at once must not retry every second forever."""
+    hub = BiomatxHub(URL, 4, None, frame_gap=0, reconnect_delays=(0, 30))
+    await hub.async_connect()
+    task = asyncio.create_task(hub.async_run())
+    await settle()
+    fake_serial.drop_link()
+    await settle(30)
+    assert len(fake_serial.opens) == 2  # immediate first retry succeeded
+    fake_serial.drop_link()
+    await settle(30)
+    assert len(fake_serial.opens) == 2  # second retry waits 30 s: no third open
+    assert hub.connected is False
+    await hub.async_close()
+    await asyncio.wait_for(task, timeout=2)
+
+
+async def test_close_while_waiting_to_reconnect_stops_promptly(
+    fake_serial: FakeSerialLink,
+) -> None:
+    """Closing must not wait for a pending reconnection delay to elapse."""
+    hub = BiomatxHub(URL, 4, None, frame_gap=0, reconnect_delays=(30,))
+    await hub.async_connect()
+    task = asyncio.create_task(hub.async_run())
+    await settle()
+    fake_serial.drop_link()
+    await settle(30)
+    assert hub.connected is False
+    await hub.async_close()
+    await asyncio.wait_for(task, timeout=1)
+
+
+async def test_close_during_a_pending_open_does_not_reopen_the_port(
+    fake_serial: FakeSerialLink, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reconnection in flight when the hub closes must not leave a port open."""
+    hub = make_hub()
+    await hub.async_connect()
+    task = asyncio.create_task(hub.async_run())
+    await settle()
+    fake_serial.hold_open = asyncio.Event()
+    fake_serial.drop_link()
+    await settle(30)
+    assert len(fake_serial.opens) == 2  # second open is pending
+    monkeypatch.setattr(hub_module, "CLOSE_TIMEOUT", 0.05)
+    await hub.async_close()
+    fake_serial.hold_open.set()
+    await settle(30)
+    assert task.done()
+    assert hub.connected is False
+    assert fake_serial.writer is not None
+    assert fake_serial.writer.closed is True
+
+
+async def test_socket_url_uses_a_plain_tcp_connection(
+    monkeypatch: pytest.MonkeyPatch, fake_serial: FakeSerialLink
+) -> None:
+    """Ethernet gateways are reached with asyncio, not pyserial's socket handler."""
+    calls: list[tuple[str, int]] = []
+
+    async def _open_connection(
+        host: str, port: int
+    ) -> tuple[asyncio.StreamReader, object]:
+        calls.append((host, port))
+        return await fake_serial.open_serial_connection(url=f"tcp://{host}:{port}")
+
+    monkeypatch.setattr(asyncio, "open_connection", _open_connection)
+    hub = BiomatxHub("socket://192.168.1.50:8899", 4, None, frame_gap=0)
+    await hub.async_connect()
+    assert calls == [("192.168.1.50", 8899)]
+    assert hub.connected is True
+    await hub.async_close()
+
+
+async def test_link_listener_exception_is_logged_and_others_still_run(
+    running: BiomatxHub,
+    fake_serial: FakeSerialLink,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failing link listener must not hide the link change from the others."""
+    seen: list[bool] = []
+
+    def _boom(connected: bool) -> None:  # noqa: FBT001  # hub callback signature
+        del connected
+        msg = "listener gone"
+        raise RuntimeError(msg)
+
+    running.add_link_listener(_boom)
+    running.add_link_listener(seen.append)
+    fake_serial.drop_link()
+    await settle()
+    assert seen[0] is False
+    assert any("link listener failed" in r.getMessage() for r in caplog.records)
+
+
+async def test_unexpected_reader_error_is_logged_and_the_link_reopened(
+    running: BiomatxHub,
+    fake_serial: FakeSerialLink,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bug while decoding must not leave the hub deaf with connected=True."""
+    original = running._handle_frame
+    calls = 0
+
+    def _flaky(first: int, second: int) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            msg = "decoder bug"
+            raise RuntimeError(msg)
+        original(first, second)
+
+    monkeypatch.setattr(running, "_handle_frame", _flaky)
+    fake_serial.feed(frames.PRESS_M1_R1)
+    await settle(50)
+    assert running.connected is True
+    assert len(fake_serial.opens) == 2
+    assert any("unexpected error" in r.getMessage() for r in caplog.records)
+    fake_serial.feed(frames.PRESS_M1_R1)
+    await settle()
+    assert running.relay(0, 0).on is True
+
+
+async def test_set_relay_is_a_no_op_when_already_in_the_wanted_state(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """Asking for the believed state sends nothing on the bus."""
+    await running.async_set_relay(running.relay(0, 0), on=False)
+    assert fake_serial.frames_written() == []
+    await running.async_set_relay(running.relay(0, 0), on=True)
+    assert fake_serial.frames_written() == [frames.PRESS_M1_R1, frames.RELEASE_M1_R1]
+    assert running.relay(0, 0).on is True
+
+
+async def test_concurrent_set_relay_commands_press_only_once(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """Two turn_on calls in the same tick must not toggle the relay twice."""
+    await asyncio.gather(
+        running.async_set_relay(running.relay(0, 0), on=True),
+        running.async_set_relay(running.relay(0, 0), on=True),
+    )
+    assert fake_serial.frames_written() == [frames.PRESS_M1_R1, frames.RELEASE_M1_R1]
+    assert running.relay(0, 0).on is True
+
+
+async def test_open_completing_after_close_is_released(
+    fake_serial: FakeSerialLink, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A port opened by a late reconnection is closed again, not kept."""
+    hub = make_hub()
+    await hub.async_connect()
+    task = asyncio.create_task(hub.async_run())
+    await settle()
+    fake_serial.hold_open = asyncio.Event()
+    fake_serial.drop_link()
+    await settle(30)
+    monkeypatch.setattr(hub_module, "CLOSE_TIMEOUT", 0.5)
+    asyncio.get_running_loop().call_later(0.01, fake_serial.hold_open.set)
+    await hub.async_close()
+    assert task.done()
+    assert hub.connected is False
+    assert fake_serial.writer is not None
+    assert fake_serial.writer.closed is True

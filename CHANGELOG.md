@@ -8,6 +8,15 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `hub.py` review fixes: the inferred relay state flips as soon as the press
+  frame is written (the modules act on the press), commands are idempotent
+  under the send lock (`async_set_relay`), the all-off scenario applies its
+  effect whether observed or sent, `reset` keeps the model consistent when a
+  press fails midway, the reader survives listener or decoding errors and
+  reopens the link, closing waits for the reader to stop, the backoff only
+  resets once data flows, stray bytes and rejected frames are counted apart
+  and logged once per burst, frames from unknown emitters are rejected, and
+  `socket://host:port` gateways use a plain asyncio TCP connection.
 - `hub.py`: the integration owns the serial link (open, decode, send, reconnect
   with backoff, inferred relay and button states, listeners). The `biomatx`
   package is now used only as a data model. Frames for unknown modules or

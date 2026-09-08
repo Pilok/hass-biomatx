@@ -24,10 +24,19 @@ class FakeStreamWriter:
         self.closed = False
 
     def write(self, data: bytes) -> None:
-        """Record written bytes, or raise the failure a test armed."""
-        if self._link.fail_write is not None:
-            exc, self._link.fail_write = self._link.fail_write, None
-            raise exc
+        """
+        Record written bytes, or raise the failure a test armed.
+
+        Like ``SerialTransport.write``, a write after ``close`` is dropped
+        silently: the real transport never raises from ``write``.
+        """
+        index, self._link.writes = self._link.writes, self._link.writes + 1
+        if self._link.fail_write_at == index:
+            self._link.fail_write_at = None
+            msg = "write failed"
+            raise OSError(msg)
+        if self.closed:
+            return
         self._link.written.extend(data)
 
     async def drain(self) -> None:
@@ -54,8 +63,15 @@ class FakeSerialLink:
         """Start with no connection and nothing written."""
         self.opens: list[dict[str, Any]] = []
         self.written = bytearray()
+        self.writes = 0
         self.fail_open: Exception | None = None
-        self.fail_write: Exception | None = None
+        """Raise this on the next open only."""
+        self.fail_open_always: Exception | None = None
+        """Raise this on every open until cleared."""
+        self.fail_write_at: int | None = None
+        """Raise OSError on the write with this 0-based sequence number."""
+        self.hold_open: asyncio.Event | None = None
+        """When set, every open waits for this event before completing."""
         self.reader: asyncio.StreamReader | None = None
         self.writer: FakeStreamWriter | None = None
 
@@ -64,6 +80,10 @@ class FakeSerialLink:
     ) -> tuple[asyncio.StreamReader, FakeStreamWriter]:
         """Mimic ``serial_asyncio.open_serial_connection``."""
         self.opens.append(kwargs)
+        if self.hold_open is not None:
+            await self.hold_open.wait()
+        if self.fail_open_always is not None:
+            raise self.fail_open_always
         if self.fail_open is not None:
             exc, self.fail_open = self.fail_open, None
             raise exc
