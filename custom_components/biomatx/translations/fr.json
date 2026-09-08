@@ -1,0 +1,57 @@
+{
+  "title": "BioMatX",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connexion au bus BioMatX",
+        "description": "Le réseau intermodule RS485 est lu par un adaptateur série. Indiquez le périphérique série de l'adaptateur (ou une URL pyserial comme socket://hote:port pour une passerelle Ethernet), le nombre de modules BioMatX et, si elle existe, le scénario qui éteint tous les relais.",
+        "data": {
+          "device": "Périphérique série",
+          "module_count": "Nombre de modules",
+          "all_off_scenario": "Scénario « tout éteint »"
+        },
+        "data_description": {
+          "device": "Chemin du type /dev/serial/by-id/usb-FTDI_..., ou URL pyserial.",
+          "module_count": "Modules sur le bus, de 1 à 7, adressés de 1 à 7 en face avant.",
+          "all_off_scenario": "Numéro (1 à 10) du scénario programmé sur chaque module pour éteindre tous les relais. Laisser vide s'il n'existe pas."
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigurer le bus BioMatX",
+        "description": "Modifier le périphérique série, le nombre de modules ou le scénario « tout éteint ». Les entités gardent leurs identifiants.",
+        "data": {
+          "device": "Périphérique série",
+          "module_count": "Nombre de modules",
+          "all_off_scenario": "Scénario « tout éteint »"
+        },
+        "data_description": {
+          "device": "Chemin du type /dev/serial/by-id/usb-FTDI_..., ou URL pyserial.",
+          "module_count": "Modules sur le bus, de 1 à 7.",
+          "all_off_scenario": "Numéro (1 à 10) du scénario qui éteint tous les relais. Laisser vide s'il n'existe pas."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Le périphérique série n'a pas pu être ouvert. Vérifiez le chemin ou l'URL et que l'adaptateur est branché."
+    },
+    "abort": {
+      "already_configured": "Ce périphérique série est déjà configuré.",
+      "reconfigure_successful": "La configuration BioMatX a été mise à jour."
+    }
+  },
+  "entity": {
+    "light": {
+      "relay": {
+        "name": "Relay {number}"
+      }
+    }
+  },
+  "exceptions": {
+    "cannot_connect": {
+      "message": "Impossible d'ouvrir le périphérique série BioMatX {device} : {error}"
+    },
+    "link_down": {
+      "message": "Le bus BioMatX n'est pas connecté ; la commande n'a pas été envoyée."
+    }
+  }
+}
