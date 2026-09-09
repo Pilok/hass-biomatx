@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 from serial import SerialException
-import serial_asyncio
 
 from custom_components.biomatx import hub as hub_module
 from custom_components.biomatx.hub import (
@@ -31,16 +30,6 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
 
 URL = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_TEST-if00-port0"
-
-
-@pytest.fixture
-def fake_serial(monkeypatch: pytest.MonkeyPatch) -> FakeSerialLink:
-    """Replace pyserial's async opener with the in-memory link."""
-    link = FakeSerialLink()
-    monkeypatch.setattr(
-        serial_asyncio, "open_serial_connection", link.open_serial_connection
-    )
-    return link
 
 
 def make_hub(module_count: int = 4, all_off_address: int | None = None) -> BiomatxHub:

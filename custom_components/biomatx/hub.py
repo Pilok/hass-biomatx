@@ -118,7 +118,6 @@ class BiomatxHub:
         self._frames_dropped = 0
         self._bytes_dropped = 0
         self._noise_run = 0
-        self._seen_relays: set[tuple[int, int]] = set()
 
     # --- state exposed to entities and diagnostics --------------------------
 
@@ -169,10 +168,6 @@ class BiomatxHub:
     def switch(self, module: int, address: int) -> biomatx.Switch:
         """Return one button by 0-based module and button address."""
         return self._bus.switch(module, address)
-
-    def has_seen(self, relay: biomatx.Relay) -> bool:
-        """Return whether a frame for ``relay`` was decoded since the hub started."""
-        return (relay.module.address, relay.address) in self._seen_relays
 
     def _is_known_module(self, address: int) -> bool:
         return address < self.module_count or address == SCENARIO_MODULE_ADDRESS
@@ -387,7 +382,6 @@ class BiomatxHub:
                 self._mark_all_off()
         elif packet.pressed:
             relay = self._bus.relay(packet.module, packet.switch)
-            self._seen_relays.add((packet.module, packet.switch))
             relay.on = not relay.on
             self._notify(("relay", packet.module, packet.switch))
         self._notify(("switch", packet.module, packet.switch))

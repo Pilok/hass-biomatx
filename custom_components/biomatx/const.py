@@ -1,12 +1,16 @@
-"""Constants for the BiomatX integration."""
+"""Constants for the BioMatX integration."""
 
-import logging
+from typing import Final
 
-_LOGGER = logging.getLogger("custom_components.biomatx")
+DOMAIN: Final = "biomatx"
 
-DOMAIN = "biomatx"
+CONF_MODULE_COUNT: Final = "module_count"
+CONF_ALL_OFF_ADDRESS: Final = "all_off_address"
+"""Stored 0-based address of the all-off scenario button, absent when unset."""
+CONF_SERIAL_WAIT: Final = "serial_wait"
+"""Legacy upstream field with no effect; removed by the entry migration."""
 
-CONF_MODULE_COUNT = "module_count"
-CONF_SERIAL_WAIT = "serial_wait"
-CONF_ALL_OFF_ADDRESS = "all_off_address"
-BIOMATX_SIGNAL_UPDATE = "biomatx_signal_update_{}_{}_{}"
+MANUFACTURER: Final = "PSO"
+MODEL_MODULE: Final = "BioMatX 2110"
+MODEL_BUS: Final = "RS485 bus"
+MODEL_SCENARIOS: Final = "Scenario module"

@@ -8,6 +8,22 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Config entry lifecycle rewritten for Home Assistant 2026: typed
+  `entry.runtime_data`, awaited platform setup and unload, reader loop as an
+  entry background task started once the entities exist, `ConfigEntryNotReady`
+  when the port cannot be opened, the bus closed only when every platform
+  unloaded, entry migration from version 1 (drops the inert `serial_wait`, sets
+  the device as unique id, renames the upstream entity unique ids so entity ids
+  survive the upgrade, removes the upstream per-relay devices).
+- Devices: one "BioMatX bus" hub device and one device per module ("BioMatX
+  module N", 1-based), linked with `via_device_id`.
+- Lights: `assumed_state`, last state restored after a restart (before the bus
+  is followed), `unavailable` while the serial link is down, translated error
+  when a command cannot be sent, concurrent commands for one relay press it
+  once. Unique ids are prefixed by the config entry id; names are "Relay N".
+- Translations `en.json` and `fr.json` with identical keys (config flow,
+  entity names, exceptions); `strings.json` removed as required for custom
+  integrations.
 - `hub.py` review fixes: the inferred relay state flips as soon as the press
   frame is written (the modules act on the press), commands are idempotent
   under the send lock (`async_set_relay`), the all-off scenario applies its
@@ -34,8 +50,18 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The integration no longer sends anything on the bus when it starts (upstream
+  fired the all-off scenario at every connection).
 - `manifest.json`: `issue_tracker` and `documentation` point to this repository,
   `integration_type` is `hub`, `loggers` declared, empty discovery keys removed,
   version restarted at `1.0.0-beta.0`.
+
+### Removed
+
+- `bus.py` and its process-wide `time.sleep` monkeypatch.
+- The upstream `binary_sensor.py` and `services.yaml`: the button platform and
+  the `reset` / `all_off` services return in the next changes, rewritten; the
+  upstream `reload` service is dropped for good (Home Assistant reloads the
+  config entry, and the link reconnects by itself).
 
 [Unreleased]: https://github.com/pilok/hass-biomatx/compare/f2ea009...HEAD

@@ -89,7 +89,8 @@ mergeable only when all of them are green.
 - Services are registered in `async_setup`, resolve their config entry through
   `homeassistant.helpers.service.async_get_config_entry`, and raise translated
   `ServiceValidationError` / `HomeAssistantError`.
-- `entry.runtime_data` (typed `ConfigEntry[BiomatxHub]`), never `hass.data`.
+- `entry.runtime_data` (typed `ConfigEntry[BiomatxData]`: the hub and the hub
+  device id), never `hass.data`.
   Platforms are forwarded with one awaited `async_forward_entry_setups`.
   Background work uses `entry.async_create_background_task`.
 - Entities: `_attr_has_entity_name = True`, unique_id prefixed by the entry id,

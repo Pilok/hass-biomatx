@@ -8,13 +8,7 @@ line-length = 88
 # Legacy upstream modules are excluded until each one is rewritten under test
 # (one pull request per module, see AGENTS.md). New code is always linted.
 extend-exclude = [
-    "custom_components/biomatx/__init__.py",
-    "custom_components/biomatx/binary_sensor.py",
-    "custom_components/biomatx/bus.py",
     "custom_components/biomatx/config_flow.py",
-    "custom_components/biomatx/const.py",
-    "custom_components/biomatx/entity.py",
-    "custom_components/biomatx/light.py",
 ]
 
 [tool.ruff.lint]

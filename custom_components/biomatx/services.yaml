@@ -1,9 +1,0 @@
-reset:
-  name: reset
-  description: Ensure that BiomatX relays match Home Assistant state.
-all_off:
-  name: turn everything off
-  description: Turn every relay off.
-reload:
-  name: reload
-  description: Reopen serial connection.

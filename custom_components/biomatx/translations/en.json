@@ -1,22 +1,57 @@
 {
-    "config": {
-        "abort": {
-            "already_configured": "Device is already configured"
+  "title": "BioMatX",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to the BioMatX bus",
+        "description": "The RS485 inter-module bus is read through a serial adapter. Enter the serial device of the adapter (or a pyserial URL such as socket://host:port for an Ethernet gateway), the number of BioMatX modules, and optionally the scenario that turns every relay off.",
+        "data": {
+          "device": "Serial device",
+          "module_count": "Number of modules",
+          "all_off_scenario": "\"All off\" scenario"
         },
-        "error": {
-            "cannot_connect": "Failed to connect",
-            "invalid_auth": "Invalid authentication",
-            "unknown": "Unexpected error"
-        },
-        "step": {
-            "user": {
-                "data": {
-                    "host": "Host",
-                    "password": "Password",
-                    "username": "Username"
-                }
-            }
+        "data_description": {
+          "device": "Path such as /dev/serial/by-id/usb-FTDI_..., or a pyserial URL.",
+          "module_count": "Modules on the bus, 1 to 7, addressed 1 to 7 on their front panel.",
+          "all_off_scenario": "Number (1 to 10) of the scenario programmed on every module to switch all relays off. Leave empty if none exists."
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure the BioMatX bus",
+        "description": "Change the serial device, the number of modules or the \"all off\" scenario. Entities keep their identifiers.",
+        "data": {
+          "device": "Serial device",
+          "module_count": "Number of modules",
+          "all_off_scenario": "\"All off\" scenario"
+        },
+        "data_description": {
+          "device": "Path such as /dev/serial/by-id/usb-FTDI_..., or a pyserial URL.",
+          "module_count": "Modules on the bus, 1 to 7.",
+          "all_off_scenario": "Number (1 to 10) of the scenario that switches all relays off. Leave empty if none exists."
+        }
+      }
     },
-    "title": "BiomatX"
+    "error": {
+      "cannot_connect": "The serial device could not be opened. Check the path or URL and that the adapter is plugged in."
+    },
+    "abort": {
+      "already_configured": "This serial device is already configured.",
+      "reconfigure_successful": "The BioMatX configuration was updated."
+    }
+  },
+  "entity": {
+    "light": {
+      "relay": {
+        "name": "Relay {number}"
+      }
+    }
+  },
+  "exceptions": {
+    "cannot_connect": {
+      "message": "Cannot open the BioMatX serial device {device}: {error}"
+    },
+    "link_down": {
+      "message": "The BioMatX bus is not connected; the command was not sent."
+    }
+  }
 }
