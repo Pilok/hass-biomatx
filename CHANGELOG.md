@@ -6,6 +6,10 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.1] - 2026-09-09
+
+First pre-release of the fork. Installable through HACS as a custom repository.
+
 ### Added
 
 - Config flow rewritten: the serial device is opened once before the entry is
@@ -61,7 +65,7 @@ the project uses [Semantic Versioning](https://semver.org/).
   fired the all-off scenario at every connection).
 - `manifest.json`: `issue_tracker` and `documentation` point to this repository,
   `integration_type` is `hub`, `loggers` declared, empty discovery keys removed,
-  version restarted at `1.0.0-beta.0`.
+  version restarted at `1.0.0-beta.1`.
 
 ### Removed
 
@@ -71,4 +75,5 @@ the project uses [Semantic Versioning](https://semver.org/).
   upstream `reload` service is dropped for good (Home Assistant reloads the
   config entry, and the link reconnects by itself).
 
-[Unreleased]: https://github.com/pilok/hass-biomatx/compare/f2ea009...HEAD
+[Unreleased]: https://github.com/Pilok/hass-biomatx/compare/v1.0.0-beta.1...HEAD
+[1.0.0-beta.1]: https://github.com/Pilok/hass-biomatx/compare/f2ea009...v1.0.0-beta.1
