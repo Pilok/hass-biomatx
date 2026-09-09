@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
@@ -26,6 +27,8 @@ URL = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_TEST-if00-port0"
 MODULE_COUNT = 4
 ALL_OFF_ADDRESS = 5
 
+type SetupIntegration = Callable[[MockConfigEntry], Awaitable[MockConfigEntry]]
+
 
 @pytest.fixture(autouse=True)
 def _enable_custom_integrations(enable_custom_integrations: None) -> None:
@@ -39,6 +42,7 @@ def fake_serial(monkeypatch: pytest.MonkeyPatch) -> FakeSerialLink:
     monkeypatch.setattr(
         serial_asyncio, "open_serial_connection", link.open_serial_connection
     )
+    monkeypatch.setattr(asyncio, "open_connection", link.open_tcp_connection)
     return link
 
 
