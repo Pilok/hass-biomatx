@@ -442,15 +442,171 @@ async def test_set_relay_off_is_confirmed_by_a_report_without_the_bit(
 async def test_set_relay_raises_when_no_report_confirms_it(
     running: BiomatxHub, fake_serial: FakeSerialLink
 ) -> None:
-    """No confirmation within the timeout is an error, and the state is not touched."""
+    """No report at all after the press is an error, and the state is not touched."""
     await report(running, fake_serial, fm.STATE_M1_ALL_OFF)
-    with pytest.raises(BiomatxCommandError):
+    with pytest.raises(BiomatxModuleUnavailableError, match="stopped reporting"):
         await running.async_set_relay(running.relay(0, 0), on=True)
     assert fake_serial.frames_written(COMMAND_FRAME_LENGTH) == [
         fm.PRESS_M1_R1,
         fm.RELEASE_M1_R1,
     ]
     assert running.relay(0, 0).on is False
+
+
+async def test_late_report_confirms_without_a_second_press(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """A report after the timeout still counts; pressing again would undo it."""
+    await report(running, fake_serial, fm.STATE_M1_ALL_OFF)
+    task = asyncio.create_task(running.async_set_relay(running.relay(0, 0), on=True))
+    await asyncio.sleep(CONFIRM_TIMEOUT * 1.5)
+    assert not task.done()
+    fake_serial.feed(fm.STATE_M1_R1_ON)
+    await asyncio.wait_for(task, timeout=1)
+    assert running.relay(0, 0).on is True
+    assert fake_serial.frames_written(COMMAND_FRAME_LENGTH) == [
+        fm.PRESS_M1_R1,
+        fm.RELEASE_M1_R1,
+    ]
+
+
+async def test_report_showing_no_effect_triggers_one_more_press(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """The module reports on time but unchanged: the press was lost, press again."""
+    await report(running, fake_serial, fm.STATE_M1_ALL_OFF)
+    task = asyncio.create_task(running.async_set_relay(running.relay(0, 0), on=True))
+    await asyncio.sleep(CONFIRM_TIMEOUT * 1.5)
+    fake_serial.feed(fm.STATE_M1_ALL_OFF)  # the module is alive, the relay did not move
+    await settle()
+    assert fake_serial.frames_written(COMMAND_FRAME_LENGTH) == [
+        fm.PRESS_M1_R1,
+        fm.RELEASE_M1_R1,
+        fm.PRESS_M1_R1,
+        fm.RELEASE_M1_R1,
+    ]
+    assert not task.done()
+    fake_serial.feed(fm.STATE_M1_R1_ON)
+    await asyncio.wait_for(task, timeout=1)
+    assert running.relay(0, 0).on is True
+
+
+async def test_two_ignored_presses_are_an_error(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """Two presses without effect: stop, the relay is stuck or mis-addressed."""
+    await report(running, fake_serial, fm.STATE_M1_ALL_OFF)
+    task = asyncio.create_task(running.async_set_relay(running.relay(0, 0), on=True))
+    await asyncio.sleep(CONFIRM_TIMEOUT * 1.5)
+    fake_serial.feed(fm.STATE_M1_ALL_OFF)
+    await asyncio.sleep(CONFIRM_TIMEOUT * 1.5)
+    fake_serial.feed(fm.STATE_M1_ALL_OFF)
+    with pytest.raises(BiomatxCommandError, match="two presses"):
+        await asyncio.wait_for(task, timeout=1)
+    assert len(fake_serial.frames_written(COMMAND_FRAME_LENGTH)) == 4
+    assert running.relay(0, 0).on is False
+
+
+async def test_module_silent_after_the_press_holds_the_lock_two_periods_at_most(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """No report after the press: give up after one more confirm period, not later."""
+    await report(running, fake_serial, fm.STATE_M1_ALL_OFF)
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(BiomatxModuleUnavailableError, match="stopped reporting"):
+        await running.async_set_relay(running.relay(0, 0), on=True)
+    elapsed = asyncio.get_running_loop().time() - started
+    assert CONFIRM_TIMEOUT * 2 <= elapsed < CONFIRM_TIMEOUT * 2 + MODULE_TIMEOUT
+    assert fake_serial.frames_written(COMMAND_FRAME_LENGTH) == [
+        fm.PRESS_M1_R1,
+        fm.RELEASE_M1_R1,
+    ]
+
+
+async def test_write_failure_during_a_command_is_a_link_error(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """The press fails on the wire: a link error, no retry, no orphan future."""
+    await report(running, fake_serial, fm.STATE_M1_ALL_OFF)
+    fake_serial.fail_write_at = 0  # the press itself fails
+    fake_serial.fail_open_always = OSError("unplugged")
+    with pytest.raises(BiomatxLinkError):
+        await running.async_set_relay(running.relay(0, 0), on=True)
+    assert fake_serial.frames_written(COMMAND_FRAME_LENGTH) == []
+
+
+async def test_command_waits_for_a_silent_module_to_report_again(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """A module seen before but silent now gets one more timeout to come back."""
+    await report(running, fake_serial, fm.STATE_M1_ALL_OFF)
+    await asyncio.sleep(MODULE_TIMEOUT * 1.5)
+    assert running.module_available(0) is False
+    task = asyncio.create_task(running.async_set_relay(running.relay(0, 0), on=True))
+    await settle()
+    assert (
+        fake_serial.frames_written(COMMAND_FRAME_LENGTH) == []
+    )  # nothing while silent
+    fake_serial.feed(fm.STATE_M1_ALL_OFF)  # the module is back
+    await settle()
+    assert fake_serial.frames_written(COMMAND_FRAME_LENGTH) == [
+        fm.PRESS_M1_R1,
+        fm.RELEASE_M1_R1,
+    ]
+    fake_serial.feed(fm.STATE_M1_R1_ON)
+    await asyncio.wait_for(task, timeout=1)
+    assert running.relay(0, 0).on is True
+
+
+async def test_command_on_a_silent_module_that_stays_silent_is_refused(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """The wait for a silent module is bounded; nothing is written meanwhile."""
+    await report(running, fake_serial, fm.STATE_M1_ALL_OFF)
+    await asyncio.sleep(MODULE_TIMEOUT * 1.5)
+    with pytest.raises(BiomatxModuleUnavailableError, match="not reporting"):
+        await running.async_set_relay(running.relay(0, 0), on=True)
+    assert fake_serial.frames_written(COMMAND_FRAME_LENGTH) == []
+
+
+async def test_queued_commands_share_the_silent_module_deadline(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """Past one extra timeout since its last report, a silent module is refused."""
+    await report(running, fake_serial, fm.STATE_M1_ALL_OFF)
+    await asyncio.sleep(MODULE_TIMEOUT * 2.2)
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(BiomatxModuleUnavailableError, match="not reporting"):
+        await running.async_set_relay(running.relay(0, 0), on=True)
+    assert asyncio.get_running_loop().time() - started < MODULE_TIMEOUT / 2
+
+
+async def test_reconnection_forgets_that_a_module_was_ever_seen(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """After the link came back, a module is unknown again: refused, not awaited."""
+    await report(running, fake_serial, fm.STATE_M1_ALL_OFF)
+    fake_serial.drop_link()
+    await settle()
+    await asyncio.sleep(0.05)  # reconnection on the fake link
+    await settle()
+    assert running.connected is True
+    assert running.module_last_seen(0) is None
+    with pytest.raises(BiomatxModuleUnavailableError, match="has not reported"):
+        await running.async_set_relay(running.relay(0, 0), on=True)
+
+
+async def test_command_after_the_module_returns_re_reads_its_state(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """The relay may have moved while silent: no press if it is already there."""
+    await report(running, fake_serial, fm.STATE_M1_ALL_OFF)
+    await asyncio.sleep(MODULE_TIMEOUT * 1.5)
+    task = asyncio.create_task(running.async_set_relay(running.relay(0, 0), on=True))
+    await settle()
+    fake_serial.feed(fm.STATE_M1_R1_ON)  # back, and already on
+    await asyncio.wait_for(task, timeout=1)
+    assert fake_serial.frames_written(COMMAND_FRAME_LENGTH) == []
 
 
 async def test_set_relay_is_a_no_op_when_the_report_already_says_so(
