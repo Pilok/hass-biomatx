@@ -20,12 +20,14 @@ from homeassistant.helpers import (
 from .const import (
     CONF_ALL_OFF_ADDRESS,
     CONF_MODULE_COUNT,
+    CONF_PROTOCOL,
     CONF_SERIAL_WAIT,
     DOMAIN,
     MANUFACTURER,
     MODEL_BUS,
 )
 from .hub import BiomatxConnectionError, BiomatxHub
+from .protocol import Protocol
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -57,8 +59,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:  # noqa:
 async def async_setup_entry(hass: HomeAssistant, entry: BiomatxConfigEntry) -> bool:
     """Open the bus, start reading it and set up the platforms."""
     device: str = entry.data[CONF_DEVICE]
+    stored_protocol = entry.data.get(CONF_PROTOCOL)
     hub = BiomatxHub(
-        device, entry.data[CONF_MODULE_COUNT], entry.data.get(CONF_ALL_OFF_ADDRESS)
+        device,
+        entry.data[CONF_MODULE_COUNT],
+        entry.data.get(CONF_ALL_OFF_ADDRESS),
+        protocol=None if stored_protocol is None else Protocol(stored_protocol),
     )
     try:
         await hub.async_connect()

@@ -1,11 +1,11 @@
 """
-In-memory stand-in for ``serial_asyncio.open_serial_connection``.
+In-memory stand-in for ``serialx.open_serial_connection``.
 
 The hub only needs an ``asyncio.StreamReader`` to read from and an object with
 ``write`` / ``drain`` / ``close`` to write to. This fake provides both, records
 every byte written and every connection attempt, and lets a test feed frames,
 drop the link (EOF, as when the adapter is unplugged) or fail it with an
-exception (as pyserial does on I/O errors).
+exception (as the serial library does on I/O errors).
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ class FakeSerialLink:
     async def open_serial_connection(
         self, **kwargs: Any
     ) -> tuple[asyncio.StreamReader, FakeStreamWriter]:
-        """Mimic ``serial_asyncio.open_serial_connection``."""
+        """Mimic ``serialx.open_serial_connection``."""
         self.opens.append(kwargs)
         if self.hold_open is not None:
             await self.hold_open.wait()
@@ -114,10 +114,17 @@ class FakeSerialLink:
         if self.reader is not None:
             self.reader.set_exception(exc)
 
-    def frames_written(self) -> list[str]:
-        """Return the written bytes grouped two by two, e.g. ``["50 00", "50 80"]``."""
+    def frames_written(self, frame_length: int = 2) -> list[str]:
+        """
+        Return the written bytes grouped by frame, e.g. ``["50 00", "50 80"]``.
+
+        Legacy frames are two bytes; master command frames are six.
+        """
         data = bytes(self.written)
-        return [data[i : i + 2].hex(" ") for i in range(0, len(data), 2)]
+        return [
+            data[i : i + frame_length].hex(" ")
+            for i in range(0, len(data), frame_length)
+        ]
 
     def clear(self) -> None:
         """Forget what was written so far."""

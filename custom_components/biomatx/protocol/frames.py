@@ -98,6 +98,11 @@ class Codec(ABC):
     def reset(self) -> None:
         """Forget a partially received frame (the link was reopened); keep counters."""
 
+    @property
+    @abstractmethod
+    def in_frame(self) -> bool:
+        """Return whether a frame has started and is still being received."""
+
     @staticmethod
     def _check_addresses(target: int, button: int, emitter: int | None) -> None:
         """Raise ``ValueError`` when a field does not fit its bits in the frame."""

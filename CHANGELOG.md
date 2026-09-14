@@ -8,6 +8,36 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `hub.py` on the `protocol/` codecs. **Master firmware**: relay state comes
+  from the state reports only (a report updates the relays that changed and
+  wakes their listeners), a command sends press then release and waits up to
+  2 s for the report that confirms the wanted state (`BiomatxCommandError`
+  otherwise, never an optimistic flip), `turn_on` of a relay already reported
+  on sends nothing, a module silent for 10 s is unavailable
+  (`module_available`, `module_last_seen`) and its entities are woken on each
+  change, an event only updates the button, the all-off scenario observed or
+  sent leaves the relays to the modules' own reports, scenario commands are
+  emitted as module 1, `reset` is refused (`BiomatxNotSupportedError`).
+  **Legacy firmware**: behaviour unchanged (inferred state, optimistic flip,
+  `reset`), pinned by the same 46 tests as before. **Protocol detection**:
+  an entry without a stored `protocol` listens to the bus and picks the codec
+  from the first valid frame, replaying the bytes seen meanwhile; a command
+  before detection is refused (`BiomatxProtocolUnknownError`). Codec counters
+  exposed as `hub.stats`; the codec is reset on every reconnection so a frame
+  cut by an outage is not glued to the new link.
+- Config entry key `protocol` (`legacy` | `master`), optional, read at setup;
+  the config flow does not write it yet.
+
+### Changed
+
+- Serial transport on `serialx` 1.10.0, the library Home Assistant core ships,
+  with exclusive access to the device; `pyserial-asyncio` is no longer used.
+
+### Removed
+
+- The `biomatx` package: its data model lives in `protocol/model.py` since the
+  previous change, and nothing imports it any more.
+
 - `protocol/` package, the bus protocols without any Home Assistant, serial or
   `biomatx` import: `Protocol` (`legacy` | `master`), the frame types
   `EventFrame` (target, emitter, button, pressed) and `StateFrame` (module,

@@ -52,6 +52,12 @@
     },
     "link_down": {
       "message": "The BioMatX bus is not connected; the command was not sent."
+    },
+    "module_unavailable": {
+      "message": "BioMatX module {module} has not reported its state yet; the command was not sent."
+    },
+    "not_confirmed": {
+      "message": "BioMatX module {module} did not confirm the command; check the light."
     }
   }
 }

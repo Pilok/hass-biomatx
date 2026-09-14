@@ -42,6 +42,11 @@ class LegacyCodec(Codec):
         """Drop a pending start byte; the next byte opens a new frame or is noise."""
         self._pending = None
 
+    @property
+    def in_frame(self) -> bool:
+        """Return whether a start byte is waiting for its second byte."""
+        return self._pending is not None
+
     def feed(self, data: bytes) -> list[Frame]:
         """Decode the two-byte frames completed by ``data``."""
         frames: list[Frame] = []

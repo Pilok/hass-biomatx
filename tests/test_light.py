@@ -23,7 +23,7 @@ from pytest_homeassistant_custom_component.common import (
     mock_restore_cache,
 )
 
-from . import frames
+from . import frames, frames_master as fm
 from .conftest import MODULE_COUNT
 from .fake_serial import settle
 
@@ -218,6 +218,59 @@ async def test_lights_unavailable_on_link_loss_and_back_after_reconnect(
     await settle(50)
     await hass.async_block_till_done()
     assert len(fake_serial.opens) == 2
+    assert hass.states.get(M1_R1).state == STATE_ON
+
+
+async def test_master_turn_on_not_confirmed_raises_translated_error(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+    master_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """On the master firmware a command the module does not confirm is an error."""
+    await setup_integration(master_config_entry)
+    fake_serial.feed(fm.STATE_M1_ALL_OFF)
+    await hass.async_block_till_done()
+    with pytest.raises(HomeAssistantError) as excinfo:
+        await turn(hass, "turn_on", M1_R1)
+    assert excinfo.value.translation_key == "not_confirmed"
+    assert hass.states.get(M1_R1).state == STATE_OFF
+
+
+async def test_master_turn_on_before_the_module_reported_raises_translated_error(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+    master_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """Until the module has reported, its state is unknown and commands are refused."""
+    await setup_integration(master_config_entry)
+    with pytest.raises(HomeAssistantError) as excinfo:
+        await turn(hass, "turn_on", M1_R1)
+    assert excinfo.value.translation_key == "module_unavailable"
+    assert fake_serial.frames_written() == []
+
+
+async def test_master_turn_on_confirmed_by_the_report_updates_the_light(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+    master_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """The light follows the module's report, not the command."""
+    await setup_integration(master_config_entry)
+    fake_serial.feed(fm.STATE_M1_ALL_OFF)
+    await hass.async_block_till_done()
+    task = hass.async_create_task(
+        hass.services.async_call(
+            "light", "turn_on", {ATTR_ENTITY_ID: M1_R1}, blocking=True
+        )
+    )
+    await settle()
+    assert hass.states.get(M1_R1).state == STATE_OFF
+    fake_serial.feed(fm.STATE_M1_R1_ON)
+    await task
+    await hass.async_block_till_done()
     assert hass.states.get(M1_R1).state == STATE_ON
 
 
