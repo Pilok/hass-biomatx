@@ -6,9 +6,14 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [1.0.0-beta.1] - 2026-09-09
+## [1.0.0-beta.1] - 2026-09-14
 
-First pre-release of the fork. Installable through HACS as a custom repository.
+First pre-release of the fork, installable through HACS as a custom repository.
+This is the last state of the **legacy protocol** (two-byte frames, inferred
+relay state) validated on hardware: live command test and an observation night
+on a four-module bus on 2026-09-09. Modules reprogrammed with the "master"
+firmware (state reports, XOR checksum) are handled by the 2.0 line; the legacy
+path is frozen and receives fixes only.
 
 ### Added
 
