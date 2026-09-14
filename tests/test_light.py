@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
@@ -24,6 +25,8 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed,
     mock_restore_cache,
 )
+
+from custom_components.biomatx import hub as hub_module
 
 from . import frames, frames_master as fm
 from .conftest import MODULE_COUNT
@@ -362,12 +365,22 @@ async def test_master_turn_on_not_confirmed_raises_translated_error(
     master_config_entry: MockConfigEntry,
     fake_serial: FakeSerialLink,
 ) -> None:
-    """On the master firmware a command the module does not confirm is an error."""
+    """
+    On the master firmware a relay that two presses leave unmoved is an error.
+
+    The module keeps reporting, unchanged, after each press: the hub presses
+    once more, then gives up. The light stays off and available.
+    """
     await setup_integration(master_config_entry)
     fake_serial.feed(fm.STATE_M1_ALL_OFF)
     await hass.async_block_till_done()
+    task = hass.async_create_task(turn(hass, "turn_on", M1_R1))
+    for _press in range(2):
+        await asyncio.sleep(hub_module.CONFIRM_TIMEOUT * 2)
+        fake_serial.feed(fm.STATE_M1_ALL_OFF)  # alive, but the relay did not move
+        await settle()
     with pytest.raises(HomeAssistantError) as excinfo:
-        await turn(hass, "turn_on", M1_R1)
+        await task
     assert excinfo.value.translation_key == "not_confirmed"
     assert hass.states.get(M1_R1).state == STATE_OFF
 

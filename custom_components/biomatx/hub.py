@@ -61,8 +61,16 @@ FRAME_GAP = 0.2
 """Seconds to wait after each frame, so the modules have time to process it."""
 RECONNECT_DELAYS: tuple[float, ...] = (1, 2, 5, 10, 30, 60)
 """Seconds between reconnection attempts; the last value repeats."""
-CONFIRM_TIMEOUT = 2.0
-"""Seconds to wait for the state report that confirms a command (master)."""
+STATE_REPORT_PERIOD = 3.0
+"""Seconds between two unsolicited state reports of a master module."""
+CONFIRM_TIMEOUT = STATE_REPORT_PERIOD + 0.5
+"""
+Seconds to wait for the state report that confirms a command (master).
+
+A module usually reports within a second of a change, but some only answer at
+their next periodic report: the wait covers one full period plus a margin.
+Measured on 2026-09-14: three commands confirmed 2 to 3 s after the press.
+"""
 MODULE_TIMEOUT = 10.0
 """Seconds without a state report before a master module is unavailable."""
 CLOSE_TIMEOUT = 2
@@ -88,6 +96,11 @@ type Listener = Callable[[], None]
 type LinkListener = Callable[[bool], None]
 type ProtocolListener = Callable[[Protocol], None]
 type Confirmation = Callable[[StateFrame], bool]
+
+
+def _any_report(_frame: StateFrame) -> bool:
+    """Accept any state report: used to wait for a module to speak at all."""
+    return True
 
 
 class BiomatxError(Exception):
@@ -181,7 +194,9 @@ class BiomatxHub:
         self._last_seen: dict[int, float] = {}
         self._module_up: dict[int, bool] = {}
         self._module_timers: dict[int, asyncio.TimerHandle] = {}
-        self._confirmations: list[tuple[int, Confirmation, asyncio.Future[None]]] = []
+        self._confirmations: list[
+            tuple[int, Confirmation, asyncio.Future[StateFrame]]
+        ] = []
 
     # --- state exposed to entities and diagnostics --------------------------
 
@@ -566,7 +581,7 @@ class BiomatxHub:
         self._touch_module(frame.module)
         for module, confirmed, future in list(self._confirmations):
             if module == frame.module and not future.done() and confirmed(frame):
-                future.set_result(None)
+                future.set_result(frame)
 
     def _touch_module(self, address: int) -> None:
         """Record a state report: the module is alive for another timeout."""
@@ -647,27 +662,93 @@ class BiomatxHub:
             codec.encode_button(module, switch, pressed=False, emitter=emitter)
         )
 
+    async def _await_report(
+        self, module: int, wanted: Confirmation, within: float
+    ) -> StateFrame | None:
+        """
+        Wait up to ``within`` seconds for a report of ``module`` satisfying ``wanted``.
+
+        Returns the report, or ``None`` on timeout. A link loss raises
+        ``BiomatxLinkError`` at once. Callers hold ``_send_lock``.
+        """
+        future: asyncio.Future[StateFrame] = asyncio.get_running_loop().create_future()
+        entry = (module, wanted, future)
+        self._confirmations.append(entry)
+        try:
+            return await asyncio.wait_for(future, timeout=within)
+        except TimeoutError:
+            return None
+        finally:
+            self._confirmations.remove(entry)
+
+    async def _ensure_module_reporting(self, module: int) -> None:
+        """
+        Make sure ``module`` has a current state before acting on it.
+
+        A module that never reported is refused: a default or restored relay
+        state is not a bus fact. A module seen before but silent now (it stayed
+        quiet for 10 s under a burst of commands on 2026-09-14) gets one
+        ``MODULE_TIMEOUT`` to report again; nothing is written meanwhile.
+        Callers hold ``_send_lock``.
+        """
+        if self.module_available(module):
+            return
+        if module not in self._last_seen:
+            msg = f"module {module + 1} has not reported its state"
+            raise BiomatxModuleUnavailableError(msg)
+        _LOGGER.debug("module %d is silent, waiting for its next report", module + 1)
+        if await self._await_report(module, _any_report, self._module_timeout) is None:
+            msg = f"module {module + 1} is not reporting"
+            raise BiomatxModuleUnavailableError(msg)
+
     async def _confirmed_command(self, relay: Relay, confirmed: Confirmation) -> None:
         """
-        Press ``relay``'s button and wait for the state report that confirms it.
+        Press ``relay``'s button until a state report satisfies ``confirmed``.
 
         The confirmation is registered before the press is written: the module
         often answers within the press/release gap, and that report must count.
-        Callers hold ``_send_lock``.
+        Without a confirmation in ``CONFIRM_TIMEOUT``, the next report of the
+        module decides: it may confirm late (pressing again would undo it), or
+        show the press had no effect (a lost frame: press once more). A module
+        that stops reporting is not pressed blind. Callers hold ``_send_lock``.
         """
         module = relay.module.address
-        if not self.module_available(module):
-            msg = f"module {module + 1} has not reported its state"
-            raise BiomatxModuleUnavailableError(msg)
-        future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        for attempt in range(2):
+            if attempt:
+                _LOGGER.debug(
+                    "module %d relay %d did not move, pressing again",
+                    module + 1,
+                    relay.address + 1,
+                )
+            if (
+                await self._press_and_await(module, relay.address, confirmed)
+                is not None
+            ):
+                return
+            fresh = await self._await_report(module, _any_report, self._module_timeout)
+            if fresh is None:
+                msg = (
+                    f"module {module + 1} did not confirm the command "
+                    "and stopped reporting"
+                )
+                raise BiomatxCommandError(msg)
+            if confirmed(fresh):
+                return
+        msg = f"module {module + 1} did not confirm the command after two presses"
+        raise BiomatxCommandError(msg)
+
+    async def _press_and_await(
+        self, module: int, switch: int, confirmed: Confirmation
+    ) -> StateFrame | None:
+        """Register the confirmation, press and release, wait ``CONFIRM_TIMEOUT``."""
+        future: asyncio.Future[StateFrame] = asyncio.get_running_loop().create_future()
         entry = (module, confirmed, future)
         self._confirmations.append(entry)
         try:
-            await self._press_and_release(module, relay.address)
-            await asyncio.wait_for(future, timeout=self._confirm_timeout)
-        except TimeoutError as err:
-            msg = f"module {module + 1} did not confirm the command"
-            raise BiomatxCommandError(msg) from err
+            await self._press_and_release(module, switch)
+            return await asyncio.wait_for(future, timeout=self._confirm_timeout)
+        except TimeoutError:
+            return None
         finally:
             self._confirmations.remove(entry)
 
@@ -691,6 +772,7 @@ class BiomatxHub:
                     relay.module.address, relay.address, self._flip(relay)
                 )
                 return
+            await self._ensure_module_reporting(relay.module.address)
             was_on = relay.on
             await self._confirmed_command(
                 relay, lambda frame: frame.is_on(relay.address) != was_on
@@ -703,7 +785,8 @@ class BiomatxHub:
         The check and the press happen under the same lock, so two concurrent
         commands for one relay cannot toggle it twice. On master the call
         returns once the module reports the wanted state, or raises
-        ``BiomatxCommandError`` after ``CONFIRM_TIMEOUT``.
+        ``BiomatxCommandError`` when two presses leave it unmoved or the module
+        goes silent.
         """
         async with self._send_lock:
             if not self.reports_state:
@@ -712,9 +795,7 @@ class BiomatxHub:
                         relay.module.address, relay.address, self._flip(relay)
                     )
                 return
-            if not self.module_available(relay.module.address):
-                msg = f"module {relay.module.address + 1} has not reported its state"
-                raise BiomatxModuleUnavailableError(msg)
+            await self._ensure_module_reporting(relay.module.address)
             if relay.on == on:
                 return
             await self._confirmed_command(
