@@ -9,6 +9,8 @@ CONF_ALL_OFF_ADDRESS: Final = "all_off_address"
 """Stored 0-based address of the all-off scenario button, absent when unset."""
 CONF_ALL_OFF_SCENARIO: Final = "all_off_scenario"
 """Form field: the same scenario as a 1-based number, like the manual."""
+CONF_PROTOCOL: Final = "protocol"
+"""Stored ``Protocol`` value (``legacy`` | ``master``); absent = detect on the bus."""
 CONF_SERIAL_WAIT: Final = "serial_wait"
 """Legacy upstream field with no effect; removed by the entry migration."""
 

@@ -8,15 +8,13 @@ from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
 
-from biomatx import SCENARIO_MODULE_ADDRESS
-
 from .const import DOMAIN, MANUFACTURER, MODEL_MODULE, MODEL_SCENARIOS
+from .protocol.model import SCENARIO_MODULE_ADDRESS
 
 if TYPE_CHECKING:
-    import biomatx
-
     from . import BiomatxConfigEntry
     from .hub import BiomatxHub, DeviceKey, DeviceKind
+    from .protocol.model import Module
 
 
 def module_device_info(
@@ -45,7 +43,7 @@ class BiomatxEntity(Entity):
     def __init__(
         self,
         entry: BiomatxConfigEntry,
-        module: biomatx.Module,
+        module: Module,
         address: int,
         kind: DeviceKind,
     ) -> None:

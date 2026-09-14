@@ -114,10 +114,17 @@ class FakeSerialLink:
         if self.reader is not None:
             self.reader.set_exception(exc)
 
-    def frames_written(self) -> list[str]:
-        """Return the written bytes grouped two by two, e.g. ``["50 00", "50 80"]``."""
+    def frames_written(self, frame_length: int = 2) -> list[str]:
+        """
+        Return the written bytes grouped by frame, e.g. ``["50 00", "50 80"]``.
+
+        Legacy frames are two bytes; master command frames are six.
+        """
         data = bytes(self.written)
-        return [data[i : i + 2].hex(" ") for i in range(0, len(data), 2)]
+        return [
+            data[i : i + frame_length].hex(" ")
+            for i in range(0, len(data), frame_length)
+        ]
 
     def clear(self) -> None:
         """Forget what was written so far."""

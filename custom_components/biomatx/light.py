@@ -17,9 +17,8 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-    import biomatx
-
     from . import BiomatxConfigEntry
+    from .protocol.model import Relay
 
 # Commands are serialised by the hub's own lock; no platform-level limit needed.
 PARALLEL_UPDATES = 0
@@ -44,7 +43,7 @@ class BiomatxLight(BiomatxEntity, LightEntity, RestoreEntity):
     _attr_supported_color_modes = frozenset({ColorMode.ONOFF})
     _attr_translation_key = "relay"
 
-    def __init__(self, entry: BiomatxConfigEntry, relay: biomatx.Relay) -> None:
+    def __init__(self, entry: BiomatxConfigEntry, relay: Relay) -> None:
         """Bind the light to ``relay``."""
         super().__init__(entry, relay.module, relay.address, "relay")
         self._relay = relay

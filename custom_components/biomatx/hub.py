@@ -1,22 +1,25 @@
 """
 Serial hub: owns the RS485 link to the BioMatX modules.
 
-The hub opens the serial port, reads the two-byte frames the modules emit,
-keeps the inferred state of every relay and button, notifies listeners,
-sends frames to trigger relays and scenarios, and reopens the port when the
-link drops. It has no Home Assistant dependency so it can be unit tested with
-an in-memory link.
+The hub opens the serial port, feeds the bytes to the codec of the bus
+protocol, keeps the state of every relay and button, notifies listeners, sends
+commands and reopens the port when the link drops. It has no Home Assistant
+dependency so it can be unit tested with an in-memory link.
 
-The ``biomatx`` package is used only as a data model (``Packet``, ``Module``,
-``Relay``, ``Switch``); its own transport (``Bus.connect``, ``Bus.loop``) is
-never used.
+Two protocols exist (``protocol/``). On the **legacy** firmware the modules
+never report state: the hub infers it from the presses it sees and sends, and
+a command flips the inferred state as soon as the press frame is written. On
+the **master** firmware every module reports its relays every 3 s and after
+each change: the hub takes state from those reports only, a command waits for
+the report that confirms it, and a module silent for ``MODULE_TIMEOUT`` is
+unavailable. When the protocol is not known yet, the hub listens and detects
+it from the first valid frame.
 
-Transport notes. ``serial_asyncio`` opens USB serial devices synchronously
-(a few milliseconds) and reports write errors through the reader, never from
-``write()``: the hub therefore checks the link before writing and treats any
-reader error as a lost link. Ethernet gateways (``socket://host:port``) are
-reached with a plain asyncio TCP connection, which avoids the blocking calls
-of pyserial's socket handler.
+Transport notes. ``serialx`` (the serial library of Home Assistant core)
+opens USB serial devices with exclusive access and reports write errors
+through the reader, never from ``write()``: the hub therefore checks the link
+before writing and treats any reader error as a lost link. Ethernet gateways
+(``socket://host:port``) are reached with a plain asyncio TCP connection.
 """
 
 from __future__ import annotations
@@ -24,16 +27,30 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from typing import TYPE_CHECKING, Literal
 
-import serial
-from serial import SerialException
-import serial_asyncio
+import serialx
+from serialx import SerialException
 
-import biomatx
-from biomatx import SCENARIO_MODULE_ADDRESS, Packet
-
-from .const import RELAYS_PER_MODULE
+from .protocol import (
+    Codec,
+    EventFrame,
+    Frame,
+    ParserStats,
+    Protocol,
+    StateFrame,
+    codec_for,
+    detect,
+)
+from .protocol.model import (
+    BUTTONS_PER_MODULE,
+    SCENARIO_MODULE_ADDRESS,
+    Installation,
+    Module,
+    Relay,
+    Switch,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -45,12 +62,17 @@ FRAME_GAP = 0.2
 """Seconds to wait after each frame, so the modules have time to process it."""
 RECONNECT_DELAYS: tuple[float, ...] = (1, 2, 5, 10, 30, 60)
 """Seconds between reconnection attempts; the last value repeats."""
+CONFIRM_TIMEOUT = 2.0
+"""Seconds to wait for the state report that confirms a command (master)."""
+MODULE_TIMEOUT = 10.0
+"""Seconds without a state report before a master module is unavailable."""
 CLOSE_TIMEOUT = 2
 """Seconds to wait for the reader task and the transport to finish closing."""
 READ_CHUNK = 64
-MAX_SWITCH_ADDRESS = RELAYS_PER_MODULE - 1
-START_NIBBLES = (0x50, 0xA0)
-"""High nibbles that open a frame; the low nibble is the emitting module."""
+DETECT_BUFFER = 256
+"""Bytes kept while the protocol is unknown; older bytes are dropped."""
+SCENARIO_EMITTER = 0
+"""Master scenario commands claim the first real module, like a wall button."""
 SOCKET_URL_PREFIX = "socket://"
 
 type DeviceKind = Literal["relay", "switch"]
@@ -58,6 +80,7 @@ type DeviceKey = tuple[DeviceKind, int, int]
 """(kind, module address, switch address), all 0-based like the frames."""
 type Listener = Callable[[], None]
 type LinkListener = Callable[[bool], None]
+type Confirmation = Callable[[StateFrame], bool]
 
 
 class BiomatxError(Exception):
@@ -72,30 +95,47 @@ class BiomatxLinkError(BiomatxError):
     """The link is down or a write failed."""
 
 
+class BiomatxProtocolUnknownError(BiomatxLinkError):
+    """No frame has been seen yet, so the hub cannot encode a command."""
+
+
+class BiomatxCommandError(BiomatxError):
+    """The module did not report the commanded state in time."""
+
+
 class BiomatxNotConfiguredError(BiomatxError):
     """The requested operation needs the all-off scenario, which is not set."""
 
 
-class BiomatxHub:
-    """Owner of the serial link and of the inferred bus state."""
+class BiomatxNotSupportedError(BiomatxError):
+    """The requested operation has no meaning on this protocol."""
 
-    def __init__(
+
+class BiomatxHub:
+    """Owner of the serial link and of the bus state."""
+
+    def __init__(  # noqa: PLR0913  # three bus facts plus keyword-only timing knobs
         self,
         url: str,
         module_count: int,
         all_off_address: int | None,
         *,
+        protocol: Protocol | None = None,
         frame_gap: float | None = None,
         reconnect_delays: Sequence[float] | None = None,
+        confirm_timeout: float | None = None,
+        module_timeout: float | None = None,
     ) -> None:
         """
         Model ``module_count`` modules plus the scenario module.
 
-        ``url`` is a serial device path, a pyserial URL, or ``socket://host:port``
+        ``url`` is a serial device path, a serialx URL, or ``socket://host:port``
         for an Ethernet gateway. ``all_off_address`` is the 0-based scenario
         button that turns every relay off, or ``None`` when no such scenario
-        exists. ``frame_gap`` and ``reconnect_delays`` default to the module
-        constants, read when the hub is built so tests can shorten them.
+        exists. ``protocol`` is the firmware family of the bus, or ``None`` to
+        detect it from the first valid frame. The timing arguments default to
+        the module constants, read when the hub is built so tests can shorten
+        them.
         """
         self.url = url
         self.module_count = module_count
@@ -104,9 +144,15 @@ class BiomatxHub:
         self._reconnect_delays = tuple(
             RECONNECT_DELAYS if reconnect_delays is None else reconnect_delays
         )
-        self._bus = biomatx.Bus(module_count)
-        self._relays: list[biomatx.Relay] = self._bus.relays
-        self._switches: list[biomatx.Switch] = self._bus.switches
+        self._confirm_timeout = (
+            CONFIRM_TIMEOUT if confirm_timeout is None else confirm_timeout
+        )
+        self._module_timeout = (
+            MODULE_TIMEOUT if module_timeout is None else module_timeout
+        )
+        self._codec: Codec | None = None if protocol is None else codec_for(protocol)
+        self._detect_buffer = bytearray()
+        self._installation = Installation(module_count)
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._connected = False
@@ -117,9 +163,12 @@ class BiomatxHub:
         self._listeners: dict[DeviceKey, list[Listener]] = {}
         self._link_listeners: list[LinkListener] = []
         self._frames_received = 0
-        self._frames_dropped = 0
-        self._bytes_dropped = 0
+        self._frames_rejected = 0
         self._noise_run = 0
+        self._last_seen: dict[int, float] = {}
+        self._module_up: dict[int, bool] = {}
+        self._module_timers: dict[int, asyncio.TimerHandle] = {}
+        self._confirmations: list[tuple[int, Confirmation, asyncio.Future[None]]] = []
 
     # --- state exposed to entities and diagnostics --------------------------
 
@@ -129,47 +178,80 @@ class BiomatxHub:
         return self._connected
 
     @property
+    def protocol(self) -> Protocol | None:
+        """Return the protocol of the bus, ``None`` while not detected."""
+        return None if self._codec is None else self._codec.protocol
+
+    @property
+    def reports_state(self) -> bool:
+        """Return whether the modules report their relay states (master)."""
+        return self._codec is not None and self._codec.reports_state
+
+    @property
+    def stats(self) -> ParserStats:
+        """Return the codec counters (checksum errors, resyncs, noise...)."""
+        return ParserStats() if self._codec is None else self._codec.stats
+
+    @property
     def frames_received(self) -> int:
-        """Return the number of valid frames decoded since start."""
+        """Return the number of frames decoded and applied since start."""
         return self._frames_received
 
     @property
     def frames_dropped(self) -> int:
         """Return the number of complete frames rejected since start."""
-        return self._frames_dropped
+        return self._frames_rejected + self.stats.invalid_frames
 
     @property
     def bytes_dropped(self) -> int:
         """Return the number of stray bytes seen outside a frame since start."""
-        return self._bytes_dropped
+        return self.stats.noise_bytes
 
     @property
-    def modules(self) -> list[biomatx.Module]:
+    def modules(self) -> list[Module]:
         """Return the configured modules, scenario module excluded."""
-        return self._bus.modules
+        return self._installation.modules
 
     @property
-    def scenario_module(self) -> biomatx.Module:
+    def scenario_module(self) -> Module:
         """Return the virtual module that carries the scenarios."""
-        return self._bus.scenarios
+        return self._installation.scenario_module
 
     @property
-    def relays(self) -> list[biomatx.Relay]:
+    def relays(self) -> list[Relay]:
         """Return every relay of the configured modules."""
-        return self._relays
+        return self._installation.relays
 
     @property
-    def switches(self) -> list[biomatx.Switch]:
+    def switches(self) -> list[Switch]:
         """Return every button, scenario buttons included."""
-        return self._switches
+        return self._installation.switches
 
-    def relay(self, module: int, address: int) -> biomatx.Relay:
+    def relay(self, module: int, address: int) -> Relay:
         """Return one relay by 0-based module and relay address."""
-        return self._bus.relay(module, address)
+        return self._installation.relay(module, address)
 
-    def switch(self, module: int, address: int) -> biomatx.Switch:
+    def switch(self, module: int, address: int) -> Switch:
         """Return one button by 0-based module and button address."""
-        return self._bus.switch(module, address)
+        return self._installation.switch(module, address)
+
+    def module_available(self, address: int) -> bool:
+        """
+        Return whether module ``address`` can be trusted right now.
+
+        Legacy modules never report, so the link is the only signal. Master
+        modules are available from their first state report until they stay
+        silent for ``MODULE_TIMEOUT``.
+        """
+        if not self._connected:
+            return False
+        if not self.reports_state:
+            return True
+        return self._module_up.get(address, False)
+
+    def module_last_seen(self, address: int) -> float | None:
+        """Return the monotonic time of the last state report of a module."""
+        return self._last_seen.get(address)
 
     def _is_known_module(self, address: int) -> bool:
         return address < self.module_count or address == SCENARIO_MODULE_ADDRESS
@@ -201,6 +283,14 @@ class BiomatxHub:
             except Exception:
                 _LOGGER.exception("listener for %s failed", key)
 
+    def _notify_module(self, address: int) -> None:
+        """Wake every entity of a module (its availability changed)."""
+        module = self._installation.module(address)
+        for relay in module.relays:
+            self._notify(("relay", address, relay.address))
+        for switch in module.switches:
+            self._notify(("switch", address, switch.address))
+
     def _set_connected(self, *, connected: bool) -> None:
         if connected == self._connected:
             return
@@ -224,12 +314,12 @@ class BiomatxHub:
                 host, _, port = self.url.removeprefix(SOCKET_URL_PREFIX).rpartition(":")
                 reader, writer = await asyncio.open_connection(host, int(port))
             else:
-                reader, writer = await serial_asyncio.open_serial_connection(
+                reader, writer = await serialx.open_serial_connection(
                     url=self.url,
                     baudrate=BAUDRATE,
-                    bytesize=serial.EIGHTBITS,
-                    parity=serial.PARITY_NONE,
-                    stopbits=serial.STOPBITS_ONE,
+                    bytesize=serialx.EIGHTBITS,
+                    parity=serialx.PARITY_NONE,
+                    stopbits=serialx.STOPBITS_ONE,
                     xonxoff=False,
                     rtscts=False,
                 )
@@ -238,6 +328,10 @@ class BiomatxHub:
             raise BiomatxConnectionError(msg) from err
         self._reader = reader
         self._writer = writer
+        # A frame cut by the outage must not be glued to the new link's bytes.
+        if self._codec is not None:
+            self._codec.reset()
+        self._detect_buffer.clear()
         self._set_connected(connected=True)
 
     async def async_run(self) -> None:
@@ -275,6 +369,9 @@ class BiomatxHub:
     async def async_close(self) -> None:
         """Close the link and stop the reader loop without reconnecting."""
         self._closed.set()
+        for timer in self._module_timers.values():
+            timer.cancel()
+        self._module_timers.clear()
         writer = self._release_link()
         self._set_connected(connected=False)
         task = self._run_task
@@ -321,24 +418,37 @@ class BiomatxHub:
 
     async def _read_frames(self, reader: asyncio.StreamReader) -> None:
         """Decode frames until end of stream; raise on I/O errors."""
-        pending: int | None = None
         while True:
             chunk = await reader.read(READ_CHUNK)
             if not chunk:
                 return
             # Data flows: the link is proven, the next outage starts a new backoff.
             self._retry_index = 0
-            for byte in chunk:
-                if pending is None:
-                    if byte & 0xF0 in START_NIBBLES:
-                        pending = byte
-                        self._flush_noise()
-                    else:
-                        self._bytes_dropped += 1
-                        self._noise_run += 1
+            codec = self._codec
+            if codec is None:
+                codec = self._detect_protocol(chunk)
+                if codec is None:
                     continue
-                self._handle_frame(pending, byte)
-                pending = None
+                chunk = bytes(self._detect_buffer)
+                self._detect_buffer.clear()
+            noise_before = codec.stats.noise_bytes
+            frames = codec.feed(chunk)
+            self._noise_run += codec.stats.noise_bytes - noise_before
+            if frames:
+                self._flush_noise()
+            for frame in frames:
+                self._handle_frame(frame)
+
+    def _detect_protocol(self, chunk: bytes) -> Codec | None:
+        """Buffer ``chunk`` until a valid frame names the protocol."""
+        self._detect_buffer += chunk
+        del self._detect_buffer[:-DETECT_BUFFER]
+        protocol = detect(bytes(self._detect_buffer))
+        if protocol is None:
+            return None
+        _LOGGER.info("bus %s speaks the %s protocol", self.url, protocol.value)
+        self._codec = codec_for(protocol)
+        return self._codec
 
     def _flush_noise(self) -> None:
         if self._noise_run:
@@ -348,62 +458,114 @@ class BiomatxHub:
             )
             self._noise_run = 0
 
-    def _handle_frame(self, first: int, second: int) -> None:
-        packet = Packet.from_bytes(bytes((first, second)))
-        emitter = first & 0x0F
-        if (
-            packet.switch > MAX_SWITCH_ADDRESS
-            or not self._is_known_module(packet.module)
-            or not self._is_known_module(emitter)
+    def _handle_frame(self, frame: Frame) -> None:
+        if isinstance(frame, StateFrame):
+            self._handle_state(frame)
+        else:
+            self._handle_event(frame)
+
+    def _handle_event(self, frame: EventFrame) -> None:
+        if not (
+            self._is_known_module(frame.target) and self._is_known_module(frame.emitter)
         ):
-            self._frames_dropped += 1
+            self._frames_rejected += 1
             _LOGGER.debug(
-                "dropping frame %02x %02x: module %d button %d from module %d "
+                "dropping event for module %d button %d from module %d "
                 "(unconfigured module or bus collision)",
-                first,
-                second,
-                packet.module,
-                packet.switch,
-                emitter,
+                frame.target,
+                frame.button,
+                frame.emitter,
             )
             return
         self._frames_received += 1
         _LOGGER.debug(
-            "frame %02x %02x: module %d button %d %s (emitted by module %d)",
-            first,
-            second,
-            packet.module,
-            packet.switch,
-            "released" if packet.released else "pressed",
-            emitter,
+            "module %d button %d %s (emitted by module %d)",
+            frame.target,
+            frame.button,
+            "pressed" if frame.pressed else "released",
+            frame.emitter,
         )
-        switch = self._bus.switch(packet.module, packet.switch)
-        switch.released = packet.released
-        if packet.module == SCENARIO_MODULE_ADDRESS:
-            if packet.pressed and packet.switch == self.all_off_address:
+        switch = self._installation.switch(frame.target, frame.button)
+        switch.pressed = frame.pressed
+        if not self.reports_state:
+            self._infer_from_press(frame)
+        self._notify(("switch", frame.target, frame.button))
+
+    def _infer_from_press(self, frame: EventFrame) -> None:
+        """Legacy: a press flips its relay; the all-off scenario clears everything."""
+        if not frame.pressed:
+            return
+        if frame.target == SCENARIO_MODULE_ADDRESS:
+            if frame.button == self.all_off_address:
                 self._mark_all_off()
-        elif packet.pressed:
-            relay = self._bus.relay(packet.module, packet.switch)
-            relay.on = not relay.on
-            self._notify(("relay", packet.module, packet.switch))
-        self._notify(("switch", packet.module, packet.switch))
+            return
+        relay = self._installation.relay(frame.target, frame.button)
+        relay.on = not relay.on
+        self._notify(("relay", frame.target, frame.button))
+
+    def _handle_state(self, frame: StateFrame) -> None:
+        if frame.module >= self.module_count:
+            self._frames_rejected += 1
+            _LOGGER.debug(
+                "dropping state report of unconfigured module %d", frame.module
+            )
+            return
+        self._frames_received += 1
+        for relay in self._installation.module(frame.module).relays:
+            on = frame.is_on(relay.address)
+            if relay.on != on:
+                relay.on = on
+                self._notify(("relay", frame.module, relay.address))
+        self._touch_module(frame.module)
+        for module, confirmed, future in list(self._confirmations):
+            if module == frame.module and not future.done() and confirmed(frame):
+                future.set_result(None)
+
+    def _touch_module(self, address: int) -> None:
+        """Record a state report: the module is alive for another timeout."""
+        self._last_seen[address] = time.monotonic()
+        if (timer := self._module_timers.pop(address, None)) is not None:
+            timer.cancel()
+        self._module_timers[address] = asyncio.get_running_loop().call_later(
+            self._module_timeout, self._module_silent, address
+        )
+        if not self._module_up.get(address, False):
+            self._module_up[address] = True
+            _LOGGER.debug("module %d is reporting", address)
+            self._notify_module(address)
+
+    def _module_silent(self, address: int) -> None:
+        self._module_timers.pop(address, None)
+        self._module_up[address] = False
+        _LOGGER.warning(
+            "module %d sent no state report for %.0f s, marking it unavailable",
+            address + 1,
+            self._module_timeout,
+        )
+        self._notify_module(address)
 
     def _mark_all_off(self) -> None:
-        for relay in self._relays:
+        for relay in self._installation.relays:
             if relay.on:
                 relay.on = False
                 self._notify(("relay", relay.module.address, relay.address))
 
     # --- sending ----------------------------------------------------------------
 
-    async def _send(self, packet: Packet) -> None:
+    def _require_codec(self) -> Codec:
+        if self._codec is None:
+            msg = f"protocol of {self.url} not detected yet, no frame seen"
+            raise BiomatxProtocolUnknownError(msg)
+        return self._codec
+
+    async def _send(self, data: bytes) -> None:
         writer = self._writer
         if not self._connected or writer is None or writer.is_closing():
             self._on_link_lost(None)
             msg = f"link to {self.url} is down"
             raise BiomatxLinkError(msg)
         try:
-            writer.write(bytes(packet))
+            writer.write(data)
             await writer.drain()
         except (OSError, SerialException) as err:
             self._on_link_lost(err)
@@ -412,74 +574,127 @@ class BiomatxHub:
         await asyncio.sleep(self._frame_gap)
 
     async def _press_and_release(
-        self, module: int, switch: int, on_pressed: Callable[[], None] | None = None
+        self,
+        module: int,
+        switch: int,
+        on_pressed: Callable[[], None] | None = None,
+        *,
+        emitter: int | None = None,
     ) -> None:
         """
         Send a press then a release; ``on_pressed`` runs once the press is out.
 
-        The modules act on the press frame, so the inferred state must change
+        The modules act on the press frame, so an inferred state must change
         as soon as that frame is written, even if the release then fails.
         Callers hold ``_send_lock``.
         """
-        await self._send(Packet(module, switch, released=False))
+        codec = self._require_codec()
+        await self._send(
+            codec.encode_button(module, switch, pressed=True, emitter=emitter)
+        )
         if on_pressed is not None:
             on_pressed()
-        await self._send(Packet(module, switch, released=True))
+        await self._send(
+            codec.encode_button(module, switch, pressed=False, emitter=emitter)
+        )
 
-    def _flip(self, relay: biomatx.Relay) -> Callable[[], None]:
+    async def _await_confirmation(self, module: int, confirmed: Confirmation) -> None:
+        """Wait for a state report of ``module`` satisfying ``confirmed``."""
+        future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        entry = (module, confirmed, future)
+        self._confirmations.append(entry)
+        try:
+            await asyncio.wait_for(future, timeout=self._confirm_timeout)
+        except TimeoutError as err:
+            msg = f"module {module + 1} did not confirm the command"
+            raise BiomatxCommandError(msg) from err
+        finally:
+            self._confirmations.remove(entry)
+
+    def _flip(self, relay: Relay) -> Callable[[], None]:
         def _apply() -> None:
             relay.on = not relay.on
             self._notify(("relay", relay.module.address, relay.address))
 
         return _apply
 
-    async def async_toggle(self, relay: biomatx.Relay) -> None:
-        """Simulate a button press for ``relay`` and flip its inferred state."""
+    async def async_toggle(self, relay: Relay) -> None:
+        """
+        Simulate a button press for ``relay``.
+
+        Legacy: the inferred state flips with the press. Master: the call
+        returns once the module reports the relay in the other state.
+        """
         async with self._send_lock:
-            await self._press_and_release(
-                relay.module.address, relay.address, self._flip(relay)
+            if not self.reports_state:
+                await self._press_and_release(
+                    relay.module.address, relay.address, self._flip(relay)
+                )
+                return
+            was_on = relay.on
+            await self._press_and_release(relay.module.address, relay.address)
+            await self._await_confirmation(
+                relay.module.address,
+                lambda frame: frame.is_on(relay.address) != was_on,
             )
 
-    async def async_set_relay(self, relay: biomatx.Relay, *, on: bool) -> None:
+    async def async_set_relay(self, relay: Relay, *, on: bool) -> None:
         """
-        Bring ``relay`` to ``on``; a no-op when it is already believed there.
+        Bring ``relay`` to ``on``; a no-op when it is already there.
 
         The check and the press happen under the same lock, so two concurrent
-        commands for one relay cannot toggle it twice.
+        commands for one relay cannot toggle it twice. On master the call
+        returns once the module reports the wanted state, or raises
+        ``BiomatxCommandError`` after ``CONFIRM_TIMEOUT``.
         """
         async with self._send_lock:
             if relay.on == on:
                 return
-            await self._press_and_release(
-                relay.module.address, relay.address, self._flip(relay)
+            if not self.reports_state:
+                await self._press_and_release(
+                    relay.module.address, relay.address, self._flip(relay)
+                )
+                return
+            await self._press_and_release(relay.module.address, relay.address)
+            await self._await_confirmation(
+                relay.module.address, lambda frame: frame.is_on(relay.address) == on
             )
 
     async def async_activate_scenario(self, address: int) -> None:
         """
         Trigger the scenario button ``address`` (0-based) of module 7.
 
-        Triggering the all-off scenario marks every relay off, as observing it
-        on the bus does.
+        Legacy: triggering the all-off scenario marks every relay off, as
+        observing it on the bus does. Master: the modules report their new
+        states by themselves within a second.
         """
         async with self._send_lock:
+            if self.reports_state:
+                await self._press_and_release(
+                    SCENARIO_MODULE_ADDRESS, address, emitter=SCENARIO_EMITTER
+                )
+                return
             on_pressed = self._mark_all_off if address == self.all_off_address else None
             await self._press_and_release(SCENARIO_MODULE_ADDRESS, address, on_pressed)
 
     async def async_all_off(self) -> None:
-        """Fire the all-off scenario and mark every relay off."""
+        """Fire the all-off scenario."""
         await self.async_activate_scenario(self._require_all_off_address())
 
     async def async_reset(self) -> None:
         """
-        Resynchronise the modules with the inferred state.
+        Legacy only: resynchronise the modules with the inferred state.
 
         Fires the all-off scenario (every relay is then physically off), then
         presses every relay believed on. If a press fails midway, the relays
         not reached stay off in the model, like on the bus.
         """
+        if self.reports_state:
+            msg = "the modules report their state; there is nothing to resynchronise"
+            raise BiomatxNotSupportedError(msg)
         address = self._require_all_off_address()
         async with self._send_lock:
-            believed_on = [relay for relay in self._relays if relay.on]
+            believed_on = [relay for relay in self._installation.relays if relay.on]
             await self._press_and_release(
                 SCENARIO_MODULE_ADDRESS, address, self._mark_all_off
             )
@@ -493,3 +708,18 @@ class BiomatxHub:
             msg = "no all-off scenario configured"
             raise BiomatxNotConfiguredError(msg)
         return self.all_off_address
+
+
+__all__ = [
+    "BUTTONS_PER_MODULE",
+    "BiomatxCommandError",
+    "BiomatxConnectionError",
+    "BiomatxError",
+    "BiomatxHub",
+    "BiomatxLinkError",
+    "BiomatxNotConfiguredError",
+    "BiomatxNotSupportedError",
+    "BiomatxProtocolUnknownError",
+    "DeviceKey",
+    "DeviceKind",
+]

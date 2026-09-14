@@ -1,9 +1,10 @@
 """
-Unit tests for the serial hub, without Home Assistant.
+Unit tests for the serial hub on the legacy protocol, without Home Assistant.
 
 The hub owns the serial transport: it opens the port, decodes frames, keeps the
 inferred relay and button states, notifies listeners, sends frames, and
-reconnects when the link drops.
+reconnects when the link drops. These cases pin the legacy behaviour, which is
+frozen; the master protocol is covered by ``test_hub_master.py``.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from custom_components.biomatx.hub import (
     BiomatxLinkError,
     BiomatxNotConfiguredError,
 )
+from custom_components.biomatx.protocol import Protocol
 
 from . import frames
 from .conftest import URL
@@ -37,6 +39,7 @@ def make_hub(module_count: int = 4, all_off_address: int | None = None) -> Bioma
         URL,
         module_count,
         all_off_address,
+        protocol=Protocol.LEGACY,
         frame_gap=0,
         reconnect_delays=(0,),
     )
@@ -105,6 +108,19 @@ async def test_hub_models_configured_modules_and_scenarios() -> None:
     assert hub.scenario_module.address == 7
     assert len(hub.relays) == 40
     assert len(hub.switches) == 50
+
+
+async def test_legacy_modules_are_available_whenever_the_link_is_up(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """Legacy modules never report, so the link is the only availability signal."""
+    assert running.protocol is Protocol.LEGACY
+    assert running.reports_state is False
+    assert running.module_available(0) is True
+    fake_serial.fail_open_always = OSError("unplugged")
+    fake_serial.drop_link()
+    await settle()
+    assert running.module_available(0) is False
 
 
 # --- decoding ---------------------------------------------------------------
@@ -191,7 +207,7 @@ async def test_orphan_byte_desyncs_one_frame_then_resyncs(
     await settle()
     assert running.relay(0, 0).on is False
     assert running.relay(1, 7).on is True
-    assert running.frames_dropped == 1  # "50 50" targets module 6, unconfigured
+    assert running.frames_dropped == 1  # "50 50" targets module 5, unconfigured
     assert running.bytes_dropped == 1  # the stray "00"
 
 
@@ -581,7 +597,9 @@ async def test_backoff_only_resets_once_data_has_been_read(
     fake_serial: FakeSerialLink,
 ) -> None:
     """A port that opens then drops at once must not retry every second forever."""
-    hub = BiomatxHub(URL, 4, None, frame_gap=0, reconnect_delays=(0, 30))
+    hub = BiomatxHub(
+        URL, 4, None, protocol=Protocol.LEGACY, frame_gap=0, reconnect_delays=(0, 30)
+    )
     await hub.async_connect()
     task = asyncio.create_task(hub.async_run())
     await settle()
@@ -600,7 +618,9 @@ async def test_close_while_waiting_to_reconnect_stops_promptly(
     fake_serial: FakeSerialLink,
 ) -> None:
     """Closing must not wait for a pending reconnection delay to elapse."""
-    hub = BiomatxHub(URL, 4, None, frame_gap=0, reconnect_delays=(30,))
+    hub = BiomatxHub(
+        URL, 4, None, protocol=Protocol.LEGACY, frame_gap=0, reconnect_delays=(30,)
+    )
     await hub.async_connect()
     task = asyncio.create_task(hub.async_run())
     await settle()
@@ -646,7 +666,9 @@ async def test_socket_url_uses_a_plain_tcp_connection(
         return await fake_serial.open_serial_connection(url=f"tcp://{host}:{port}")
 
     monkeypatch.setattr(asyncio, "open_connection", _open_connection)
-    hub = BiomatxHub("socket://192.168.1.50:8899", 4, None, frame_gap=0)
+    hub = BiomatxHub(
+        "socket://192.168.1.50:8899", 4, None, protocol=Protocol.LEGACY, frame_gap=0
+    )
     await hub.async_connect()
     assert calls == [("192.168.1.50", 8899)]
     assert hub.connected is True
@@ -684,13 +706,13 @@ async def test_unexpected_reader_error_is_logged_and_the_link_reopened(
     original = running._handle_frame
     calls = 0
 
-    def _flaky(first: int, second: int) -> None:
+    def _flaky(frame: object) -> None:
         nonlocal calls
         calls += 1
         if calls == 1:
             msg = "decoder bug"
             raise RuntimeError(msg)
-        original(first, second)
+        original(frame)
 
     monkeypatch.setattr(running, "_handle_frame", _flaky)
     fake_serial.feed(frames.PRESS_M1_R1)

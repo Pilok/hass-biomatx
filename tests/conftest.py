@@ -7,12 +7,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-import serial_asyncio
+import serialx
 
 from custom_components.biomatx import hub as hub_module
 from custom_components.biomatx.const import (
     CONF_ALL_OFF_ADDRESS,
     CONF_MODULE_COUNT,
+    CONF_PROTOCOL,
     DOMAIN,
 )
 
@@ -39,9 +40,7 @@ def _enable_custom_integrations(enable_custom_integrations: None) -> None:
 def fake_serial(monkeypatch: pytest.MonkeyPatch) -> FakeSerialLink:
     """Replace pyserial's async opener with the in-memory link."""
     link = FakeSerialLink()
-    monkeypatch.setattr(
-        serial_asyncio, "open_serial_connection", link.open_serial_connection
-    )
+    monkeypatch.setattr(serialx, "open_serial_connection", link.open_serial_connection)
     monkeypatch.setattr(asyncio, "open_connection", link.open_tcp_connection)
     return link
 
@@ -55,7 +54,7 @@ def _fast_bus(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def mock_config_entry() -> MockConfigEntry:
-    """Return a version 2 config entry for a 4-module bus with an all-off scenario."""
+    """Return a version 2 entry for a 4-module legacy bus with an all-off scenario."""
     return MockConfigEntry(
         domain=DOMAIN,
         title="BioMatX",
@@ -65,6 +64,7 @@ def mock_config_entry() -> MockConfigEntry:
             "device": URL,
             CONF_MODULE_COUNT: MODULE_COUNT,
             CONF_ALL_OFF_ADDRESS: ALL_OFF_ADDRESS,
+            CONF_PROTOCOL: "legacy",
         },
     )
 
