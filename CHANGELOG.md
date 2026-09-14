@@ -6,6 +6,25 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `protocol/` package, the bus protocols without any Home Assistant, serial or
+  `biomatx` import: `Protocol` (`legacy` | `master`), the frame types
+  `EventFrame` (target, emitter, button, pressed) and `StateFrame` (module,
+  relay bitmap), the data model of an installation ported from `pybiomatx`
+  (`Installation`, `Module`, `Relay`, `Switch`), the legacy two-byte codec
+  moved out of `hub.py` unchanged, the codec of the "master" firmware
+  (`a5` start byte, XOR checksum, 9-byte state reports, 6-byte events,
+  byte-by-byte parser that resynchronises on the next start byte after a bad
+  checksum or an unknown type, field validation of frames that pass the
+  checksum, `reset()` for reconnections, counters for diagnostics), and
+  `detect()` which
+  names the protocol from a sample of traffic (master first: its frames carry
+  a checksum, and a master frame can pass for a legacy one). The whole Enersol
+  showroom capture of 2026-09-14 (653 state reports, 22 events) is replayed in
+  the tests at every read boundary. Nothing uses the package yet; the hub
+  switches to it in the next change.
+
 ## [1.0.0-beta.1] - 2026-09-14
 
 First pre-release of the fork, installable through HACS as a custom repository.
