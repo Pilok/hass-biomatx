@@ -127,7 +127,7 @@ class BiomatxCommandError(BiomatxError):
 
 
 class BiomatxModuleUnavailableError(BiomatxError):
-    """The module is not reporting (never did, or fell silent), nothing is commanded blind."""
+    """The module is not reporting, never did or fell silent: nothing is commanded blind."""
 
 
 class BiomatxNotConfiguredError(BiomatxError):
