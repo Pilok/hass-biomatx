@@ -1,4 +1,4 @@
-"""Tests for the light platform: one assumed-state light per relay."""
+"""Tests for the light platform: one light per relay, real or inferred state."""
 
 from __future__ import annotations
 
@@ -302,6 +302,58 @@ async def test_master_light_does_not_restore_a_remembered_state(
     await hass.async_block_till_done()
     assert hass.states.get(M1_R1).state == STATE_OFF
     assert fake_serial.frames_written() == []
+
+
+async def test_runtime_detection_marks_unreported_modules_unavailable(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+    undetected_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """The production entry stores no protocol: entities must follow the detection."""
+    await setup_integration(undetected_config_entry)
+    before = hass.states.get(M2_R8)
+    assert before.state == STATE_OFF
+    assert before.attributes[ATTR_ASSUMED_STATE] is True
+    fake_serial.feed(fm.STATE_HOUSE_M1)
+    await hass.async_block_till_done()
+    assert hass.states.get(M1_R2).state == STATE_ON
+    assert ATTR_ASSUMED_STATE not in hass.states.get(M1_R2).attributes
+    assert hass.states.get(M2_R8).state == STATE_UNAVAILABLE
+    fake_serial.feed(fm.STATE_M2_ALL_OFF)
+    await hass.async_block_till_done()
+    assert hass.states.get(M2_R8).state == STATE_OFF
+
+
+async def test_runtime_detection_stores_the_protocol_in_the_entry(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+    undetected_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """The next start must not go through the ambiguous window again."""
+    entry = await setup_integration(undetected_config_entry)
+    assert "protocol" not in entry.data
+    fake_serial.feed(fm.STATE_M1_ALL_OFF)
+    await hass.async_block_till_done()
+    assert entry.data["protocol"] == "master"
+
+
+async def test_light_restores_its_state_while_the_protocol_is_unknown(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+    undetected_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """A silent legacy bus may take hours to detect: restore first, correct later."""
+    mock_restore_cache(hass, [State(M1_R1, STATE_ON)])
+    await setup_integration(undetected_config_entry)
+    assert hass.states.get(M1_R1).state == STATE_ON
+    fake_serial.feed(frames.PRESS_M1_R8 + frames.RELEASE_M1_R8)  # legacy detected
+    await hass.async_block_till_done()
+    assert hass.states.get(M1_R1).state == STATE_ON
+    assert hass.states.get(M1_R8).state == STATE_ON
+    assert hass.states.get(M1_R1).attributes[ATTR_ASSUMED_STATE] is True
 
 
 async def test_master_turn_on_not_confirmed_raises_translated_error(

@@ -625,6 +625,30 @@ async def test_detection_survives_a_long_run_of_noise(
     await stop_hub(hub, task)
 
 
+async def test_protocol_listeners_are_told_and_a_failing_one_is_logged(
+    fake_serial: FakeSerialLink, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The entry stores the detected protocol via a listener; a bug there is logged."""
+    hub = make_hub(protocol=None)
+    task = await run_hub(hub)
+    seen: list[Protocol] = []
+
+    def _boom(protocol: Protocol) -> None:
+        del protocol
+        msg = "listener gone"
+        raise RuntimeError(msg)
+
+    hub.add_protocol_listener(_boom)
+    unsubscribe = hub.add_protocol_listener(seen.append)
+    fake_serial.feed(fm.STATE_M1_ALL_OFF)
+    await settle()
+    assert seen == [Protocol.MASTER]
+    assert hub.module_available(0) is True
+    assert any("protocol listener failed" in r.getMessage() for r in caplog.records)
+    unsubscribe()
+    await stop_hub(hub, task)
+
+
 async def test_first_read_in_the_middle_of_a_master_report_does_not_latch_legacy(
     fake_serial: FakeSerialLink,
 ) -> None:

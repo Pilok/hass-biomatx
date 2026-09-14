@@ -72,7 +72,7 @@ async def test_wall_press_fires_pressed_then_released_with_the_emitter(
     assert state.state != STATE_UNKNOWN
     assert state.attributes[ATTR_EVENT_TYPE] == "pressed"
     assert state.attributes["emitter_module"] == 2
-    assert ATTR_EVENT_TYPE not in hass.states.get(M2_B5).attributes
+    assert hass.states.get(M2_B5).attributes.get(ATTR_EVENT_TYPE) is None
     fake_serial.feed(fm.WALL_RELEASE_M2_TO_M1_R5)
     await hass.async_block_till_done()
     assert hass.states.get(M1_B5).attributes[ATTR_EVENT_TYPE] == "released"
@@ -127,19 +127,19 @@ async def test_availability_change_does_not_fire_a_phantom_event(
     assert after.attributes[ATTR_EVENT_TYPE] == "pressed"
 
 
-async def test_events_follow_module_and_link_availability(
+async def test_events_follow_the_link_not_the_module(
     hass: HomeAssistant,
     setup_integration: SetupIntegration,
     master_config_entry: MockConfigEntry,
     fake_serial: FakeSerialLink,
 ) -> None:
-    """Button events of a silent module are unavailable; scenarios need the link."""
+    """An event is a bus fact: it is delivered even if the target module is silent."""
     await setup_integration(master_config_entry)
-    assert hass.states.get(M1_B1).state == STATE_UNAVAILABLE
-    assert hass.states.get(SCENARIO_1).state == STATE_UNKNOWN
-    fake_serial.feed(fm.STATE_M1_ALL_OFF)
-    await hass.async_block_till_done()
     assert hass.states.get(M1_B1).state == STATE_UNKNOWN
+    assert hass.states.get(SCENARIO_1).state == STATE_UNKNOWN
+    fake_serial.feed(fm.WALL_PRESS_M2_TO_M1_R5)  # module 1 never reported
+    await hass.async_block_till_done()
+    assert hass.states.get(M1_B5).attributes[ATTR_EVENT_TYPE] == "pressed"
     fake_serial.fail_open_always = OSError("unplugged")
     fake_serial.drop_link()
     await hass.async_block_till_done()

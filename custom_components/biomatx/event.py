@@ -46,6 +46,16 @@ class BiomatxButtonEvent(BiomatxEntity, EventEntity):
     _attr_device_class = EventDeviceClass.BUTTON
     _attr_event_types: ClassVar[list[str]] = [EVENT_PRESSED, EVENT_RELEASED]
 
+    @property
+    def available(self) -> bool:
+        """
+        Return whether the link is up.
+
+        An event is a fact carried by the bus at a point in time, whether or
+        not the target module is reporting its state; only the link matters.
+        """
+        return self._hub.connected
+
     def __init__(self, entry: BiomatxConfigEntry, switch: Switch) -> None:
         """Bind the entity to ``switch``."""
         super().__init__(entry, switch.module, switch.address, "switch")
@@ -60,9 +70,8 @@ class BiomatxButtonEvent(BiomatxEntity, EventEntity):
         """Fire an event when the button moved; a mere refresh only rewrites state."""
         if self._switch.events != self._seen_events:
             self._seen_events = self._switch.events
-            emitter = self._switch.emitter
             self._trigger_event(
                 EVENT_PRESSED if self._switch.pressed else EVENT_RELEASED,
-                {ATTR_EMITTER_MODULE: None if emitter is None else emitter + 1},
+                {ATTR_EMITTER_MODULE: self._switch.emitter + 1},
             )
         self.async_write_ha_state()

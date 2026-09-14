@@ -23,8 +23,8 @@ class Switch:
         self.module = module
         self.address = address
         self.pressed = False
-        self.emitter: int | None = None
-        """0-based module the last press or release was emitted by."""
+        self.emitter = module.address
+        """0-based module the last press or release was emitted by; its own at first."""
         self.events = 0
         """Number of press and release events seen, so a refresh is not an event."""
 

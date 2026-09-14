@@ -86,6 +86,7 @@ type DeviceKey = tuple[DeviceKind, int, int]
 """(kind, module address, switch address), all 0-based like the frames."""
 type Listener = Callable[[], None]
 type LinkListener = Callable[[bool], None]
+type ProtocolListener = Callable[[Protocol], None]
 type Confirmation = Callable[[StateFrame], bool]
 
 
@@ -172,6 +173,7 @@ class BiomatxHub:
         self._send_lock = asyncio.Lock()
         self._listeners: dict[DeviceKey, list[Listener]] = {}
         self._link_listeners: list[LinkListener] = []
+        self._protocol_listeners: list[ProtocolListener] = []
         self._frames_received = 0
         self._frames_rejected = 0
         self._bytes_discarded = 0
@@ -285,6 +287,15 @@ class BiomatxHub:
 
         def _unsubscribe() -> None:
             self._link_listeners.remove(listener)
+
+        return _unsubscribe
+
+    def add_protocol_listener(self, listener: ProtocolListener) -> Callable[[], None]:
+        """Call ``listener(protocol)`` when the bus protocol is detected at runtime."""
+        self._protocol_listeners.append(listener)
+
+        def _unsubscribe() -> None:
+            self._protocol_listeners.remove(listener)
 
         return _unsubscribe
 
@@ -473,6 +484,15 @@ class BiomatxHub:
             return None
         _LOGGER.info("bus %s speaks the %s protocol", self.url, protocol.value)
         self._codec = codec_for(protocol)
+        # The meaning of every entity's state and availability just changed.
+        for address in range(self.module_count):
+            self._notify_module(address)
+        self._notify_module(SCENARIO_MODULE_ADDRESS)
+        for listener in list(self._protocol_listeners):
+            try:
+                listener(protocol)
+            except Exception:
+                _LOGGER.exception("protocol listener failed")
         return self._codec
 
     def _flush_noise(self) -> None:
@@ -560,7 +580,7 @@ class BiomatxHub:
         )
         if not self._module_up.get(address, False):
             self._module_up[address] = True
-            _LOGGER.debug("module %d is reporting", address)
+            _LOGGER.debug("module %d is reporting", address + 1)
             self._notify_module(address)
 
     def _module_silent(self, address: int) -> None:

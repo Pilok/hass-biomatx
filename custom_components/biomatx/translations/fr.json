@@ -42,7 +42,7 @@
   "entity": {
     "light": {
       "relay": {
-        "name": "Relay {number}"
+        "name": "Relais {number}"
       }
     },
     "event": {

@@ -17,8 +17,15 @@ the project uses [Semantic Versioning](https://semver.org/).
   and per scenario of the virtual module ("Scenario N"), device class
   `button`, event types `pressed` and `released`, attribute `emitter_module`
   (1-based module the physical button or detector is wired on). Works on both
-  firmwares. Unique ids `{entry_id}-switch-{module}-{button}`, the ids the
-  upstream `binary_sensor` entities were migrated to.
+  firmwares. Unique ids `{entry_id}-switch-{module}-{button}`. Event entities
+  are available whenever the serial link is: a press is a bus fact even when
+  the target module is not reporting. Upgrading from the upstream integration
+  leaves its `binary_sensor` entities orphaned in the registry (a registry
+  entry is keyed by domain as well as unique id): remove them by hand until a
+  later change cleans them up.
+- A bus whose protocol is detected at runtime marks every module unavailable
+  at that moment (its state is earned again by a report) and stores the
+  detected protocol in the config entry, so the next start skips detection.
 - `hub.py` on the `protocol/` codecs. **Master firmware**: relay state comes
   from the state reports only (a report updates the relays that changed and
   wakes their listeners), a command sends press then release and waits up to

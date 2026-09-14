@@ -12,7 +12,6 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from .const import DOMAIN
 from .entity import BiomatxEntity
 from .hub import BiomatxCommandError, BiomatxLinkError, BiomatxModuleUnavailableError
-from .protocol import Protocol
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -43,6 +42,7 @@ class BiomatxLight(BiomatxEntity, LightEntity, RestoreEntity):
     On the master firmware the state is the one the module reports. On the
     legacy firmware it is inferred from the presses seen and sent, declared as
     assumed, and restored across restarts because the bus cannot tell it.
+    ``RestoreEntity`` is a base class for that legacy path only.
     """
 
     _attr_color_mode = ColorMode.ONOFF
@@ -65,8 +65,15 @@ class BiomatxLight(BiomatxEntity, LightEntity, RestoreEntity):
         return not self._hub.reports_state
 
     async def async_added_to_hass(self) -> None:
-        """Legacy only: restore the last known state before following the bus."""
-        if self._hub.protocol is Protocol.LEGACY:
+        """
+        Restore the last known state unless the modules report theirs.
+
+        A bus whose protocol is not detected yet is treated as legacy: a legacy
+        bus stays silent until someone presses a button, so waiting would lose
+        the only chance to restore. If the bus turns out to be master, the
+        detection marks every module unavailable until its first report.
+        """
+        if not self._hub.reports_state:
             last_state = await self.async_get_last_state()
             if last_state is not None and last_state.state in (STATE_ON, STATE_OFF):
                 self._relay.on = last_state.state == STATE_ON
