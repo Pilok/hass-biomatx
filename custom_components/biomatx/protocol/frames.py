@@ -10,9 +10,11 @@ into the same two frame types so the hub can treat them alike.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import ClassVar
+
+from .model import BUTTONS_PER_MODULE, MAX_MODULE_ADDRESS
 
 
 class Protocol(StrEnum):
@@ -86,18 +88,28 @@ class Codec(ABC):
     @property
     def stats(self) -> ParserStats:
         """Return a snapshot of the counters."""
-        return ParserStats(
-            frames=self._stats.frames,
-            noise_bytes=self._stats.noise_bytes,
-            checksum_errors=self._stats.checksum_errors,
-            invalid_frames=self._stats.invalid_frames,
-            unknown_types=self._stats.unknown_types,
-            resyncs=self._stats.resyncs,
-        )
+        return replace(self._stats)
 
     @abstractmethod
     def feed(self, data: bytes) -> list[Frame]:
         """Consume ``data`` (any split of the stream) and return completed frames."""
+
+    @abstractmethod
+    def reset(self) -> None:
+        """Forget a partially received frame (the link was reopened); keep counters."""
+
+    @staticmethod
+    def _check_addresses(target: int, button: int, emitter: int | None) -> None:
+        """Raise ``ValueError`` when a field does not fit its bits in the frame."""
+        if not 0 <= target <= MAX_MODULE_ADDRESS:
+            msg = f"target module {target} out of range 0-{MAX_MODULE_ADDRESS}"
+            raise ValueError(msg)
+        if not 0 <= button < BUTTONS_PER_MODULE:
+            msg = f"button {button} out of range 0-{BUTTONS_PER_MODULE - 1}"
+            raise ValueError(msg)
+        if emitter is not None and not 0 <= emitter <= MAX_MODULE_ADDRESS:
+            msg = f"emitter module {emitter} out of range 0-{MAX_MODULE_ADDRESS}"
+            raise ValueError(msg)
 
     @abstractmethod
     def encode_button(

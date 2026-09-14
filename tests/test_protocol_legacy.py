@@ -96,6 +96,29 @@ def test_orphan_start_byte_desyncs_one_frame_then_resyncs() -> None:
     assert codec.stats == ParserStats(frames=2, noise_bytes=1)
 
 
+def test_reset_drops_a_pending_start_byte_and_keeps_the_counters() -> None:
+    """On reconnection the hub resets the codec: no start byte from the old link."""
+    codec = LegacyCodec()
+    feed(codec, frames.PRESS_M1_R1)
+    codec.feed(bytes.fromhex(frames.PRESS_M2_R8[:2]))
+    codec.reset()
+    frames_out = feed(codec, frames.PRESS_M1_R1)
+    assert frames_out == [EventFrame(target=0, emitter=0, button=0, pressed=True)]
+    assert codec.stats == ParserStats(frames=2)
+
+
+@pytest.mark.parametrize(
+    ("target", "button", "emitter"),
+    [(8, 0, None), (0, 10, None), (0, 0, 8), (-1, 0, None)],
+)
+def test_encode_button_refuses_addresses_the_bus_cannot_carry(
+    target: int, button: int, emitter: int | None
+) -> None:
+    """An out-of-range field would silently corrupt a neighbouring field."""
+    with pytest.raises(ValueError, match="out of range"):
+        LegacyCodec().encode_button(target, button, pressed=True, emitter=emitter)
+
+
 def test_frame_split_across_two_reads_is_decoded() -> None:
     """At 19200 baud the two bytes often arrive in separate reads."""
     codec = LegacyCodec()

@@ -16,7 +16,9 @@ the project uses [Semantic Versioning](https://semver.org/).
   moved out of `hub.py` unchanged, the codec of the "master" firmware
   (`a5` start byte, XOR checksum, 9-byte state reports, 6-byte events,
   byte-by-byte parser that resynchronises on the next start byte after a bad
-  checksum or an unknown type, counters for diagnostics), and `detect()` which
+  checksum or an unknown type, field validation of frames that pass the
+  checksum, `reset()` for reconnections, counters for diagnostics), and
+  `detect()` which
   names the protocol from a sample of traffic (master first: its frames carry
   a checksum, and a master frame can pass for a legacy one). The whole Enersol
   showroom capture of 2026-09-14 (653 state reports, 22 events) is replayed in

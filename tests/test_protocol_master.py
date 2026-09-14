@@ -117,6 +117,32 @@ def test_state_frame_with_a5_inside_is_decoded_whole() -> None:
     ]
 
 
+def test_state_frame_whose_checksum_byte_is_a5_is_decoded_whole() -> None:
+    """The checksum byte can legitimately be ``a5``; it must not restart a frame."""
+    codec = MasterCodec()
+    frames = feed(codec, fm.STATE_M1_CHECKSUM_A5, fm.STATE_M2_ALL_OFF)
+    assert frames == [
+        StateFrame(module=0, relays=0x3BC),
+        StateFrame(module=1, relays=0),
+    ]
+    assert codec.stats == ParserStats(frames=2)
+
+
+def test_state_with_bits_beyond_relay_10_is_invalid() -> None:
+    """Only bits 0 and 1 of the last byte exist; a phantom bit is a corrupted frame."""
+    codec = MasterCodec()
+    assert feed(codec, fm.STATE_PHANTOM_RELAYS) == []
+    assert codec.stats.invalid_frames == 1
+    assert codec.stats.frames == 0
+
+
+def test_state_report_from_the_scenario_module_is_invalid() -> None:
+    """The scenario module is virtual and never reports state."""
+    codec = MasterCodec()
+    assert feed(codec, fm.STATE_SCENARIO_MODULE) == []
+    assert codec.stats.invalid_frames == 1
+
+
 # --- event frames ---------------------------------------------------------------------
 
 
@@ -190,6 +216,18 @@ def test_encode_button_defaults_the_emitter_to_the_target() -> None:
     """Without an emitter the command looks like a front-panel press."""
     encoded = MasterCodec().encode_button(1, 0, pressed=True)
     assert encoded.hex(" ") == fm.PRESS_M2_R1
+
+
+@pytest.mark.parametrize(
+    ("target", "button", "emitter"),
+    [(8, 0, None), (-1, 0, None), (0, 10, None), (0, -1, None), (0, 0, 8), (0, 0, -1)],
+)
+def test_encode_button_refuses_addresses_the_bus_cannot_carry(
+    target: int, button: int, emitter: int | None
+) -> None:
+    """An out-of-range field would silently corrupt a neighbouring field."""
+    with pytest.raises(ValueError, match="out of range"):
+        MasterCodec().encode_button(target, button, pressed=True, emitter=emitter)
 
 
 def test_encoded_frames_decode_back_to_the_same_event() -> None:
@@ -328,6 +366,17 @@ def test_malformed_event_fields_are_invalid(hex_frame: str) -> None:
     assert codec.stats.invalid_frames == 1
 
 
+def test_reset_drops_a_partial_frame_and_keeps_the_counters() -> None:
+    """On reconnection the hub resets the codec: no half frame from the old link."""
+    codec = MasterCodec()
+    feed(codec, fm.PRESS_M1_R1)
+    codec.feed(bytes.fromhex(fm.STATE_M1_ALL_OFF)[:5])
+    codec.reset()
+    frames = feed(codec, fm.STATE_M2_ALL_OFF)
+    assert frames == [StateFrame(module=1, relays=0)]
+    assert codec.stats == ParserStats(frames=2)
+
+
 def test_stats_are_independent_copies() -> None:
     """Reading the stats does not expose the codec's mutable state."""
     codec = MasterCodec()
@@ -398,6 +447,56 @@ def test_hall_capture_ends_with_every_relay_off() -> None:
         if isinstance(frame, StateFrame):
             last[frame.module] = frame.relays
     assert last == {0: 0, 1: 0}
+
+
+def _feed_stream(data: bytes) -> tuple[list[EventFrame | StateFrame], ParserStats]:
+    codec = MasterCodec()
+    frames = codec.feed(data)
+    return frames, codec.stats
+
+
+REFERENCE_STREAM = bytes.fromhex(
+    f"{fm.STATE_M1_ALL_OFF} {fm.PRESS_M1_R1} {fm.RELEASE_M1_R1} {fm.STATE_M1_R1_ON} "
+    f"{fm.WALL_PRESS_M2_TO_M1_R5} {fm.STATE_M2_ALL_OFF} {fm.STATE_HOUSE_M4}"
+)
+
+
+def _lost_frames(frames: list[EventFrame | StateFrame]) -> int:
+    expected, _ = _feed_stream(REFERENCE_STREAM)
+    delivered = set(map(repr, frames))
+    return sum(repr(frame) not in delivered for frame in expected)
+
+
+def test_one_corrupted_byte_loses_at_most_one_frame_and_invents_none() -> None:
+    """Every position, every value: the documented resynchronisation guarantee."""
+    expected, _ = _feed_stream(REFERENCE_STREAM)
+    for index in range(len(REFERENCE_STREAM)):
+        for value in range(256):
+            if value == REFERENCE_STREAM[index]:
+                continue
+            corrupted = bytearray(REFERENCE_STREAM)
+            corrupted[index] = value
+            frames, stats = _feed_stream(bytes(corrupted))
+            assert _lost_frames(frames) <= 1, (index, value)
+            assert stats.frames >= len(expected) - 1, (index, value)
+            invented = [f for f in frames if f not in expected]
+            # A corrupted byte can only produce a frame that also passes the
+            # checksum: 1 in 256 odds, and never more than one frame.
+            assert len(invented) <= 1, (index, value)
+
+
+def test_one_lost_or_inserted_byte_loses_at_most_one_frame() -> None:
+    """A byte dropped or added on the wire costs the frame it belongs to, not more."""
+    for index in range(len(REFERENCE_STREAM) + 1):
+        dropped = REFERENCE_STREAM[:index] + REFERENCE_STREAM[index + 1 :]
+        frames, _ = _feed_stream(dropped)
+        assert _lost_frames(frames) <= 1, ("drop", index)
+        for value in (0x00, 0xA5, 0x81, 0x84, 0xFF):
+            inserted = (
+                REFERENCE_STREAM[:index] + bytes((value,)) + REFERENCE_STREAM[index:]
+            )
+            frames, _ = _feed_stream(inserted)
+            assert _lost_frames(frames) <= 1, ("insert", index, value)
 
 
 def chunked(data: bytes, sizes: list[int]) -> list[bytes]:

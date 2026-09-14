@@ -38,6 +38,10 @@ class LegacyCodec(Codec):
         super().__init__()
         self._pending: int | None = None
 
+    def reset(self) -> None:
+        """Drop a pending start byte; the next byte opens a new frame or is noise."""
+        self._pending = None
+
     def feed(self, data: bytes) -> list[Frame]:
         """Decode the two-byte frames completed by ``data``."""
         frames: list[Frame] = []
@@ -74,6 +78,7 @@ class LegacyCodec(Codec):
         self, target: int, button: int, *, pressed: bool, emitter: int | None = None
     ) -> bytes:
         """Return the two bytes a button press or release puts on the bus."""
+        self._check_addresses(target, button, emitter)
         first = COMMAND_START | (target if emitter is None else emitter)
         second = (0 if pressed else RELEASED_BIT) | target << TARGET_SHIFT | button
         return bytes((first, second))

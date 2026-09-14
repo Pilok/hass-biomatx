@@ -27,11 +27,14 @@ again for the next ``a5``: at most one frame is lost per corrupted byte.
 from __future__ import annotations
 
 from functools import reduce
+import logging
 from operator import xor
 from typing import ClassVar
 
 from .frames import Codec, EventFrame, Frame, Protocol, StateFrame
-from .model import BUTTONS_PER_MODULE, MAX_MODULE_ADDRESS
+from .model import BUTTONS_PER_MODULE, MAX_MODULE_ADDRESS, SCENARIO_MODULE_ADDRESS
+
+_LOGGER = logging.getLogger(__name__)
 
 START = 0xA5
 TYPE_INDEX = 4
@@ -40,9 +43,9 @@ TYPE_EVENT = 0x84
 FRAME_LENGTHS = {TYPE_STATE: 9, TYPE_EVENT: 6}
 CHECKSUM_INDEX = 1
 
-BROADCAST = 0x7F
 STATE_MODULE_FLAG = 0x40
-STATE_RESERVED = (0x01, 0x00)
+RELAYS_HIGH_MASK = 0x03
+"""Bits of the last state byte that exist: relays 9 and 10."""
 EVENT_EMITTER_FLAG = 0x80
 PRESSED_FLAG = 0x40
 BUTTON_MASK = 0x0F
@@ -65,6 +68,10 @@ class MasterCodec(Codec):
         super().__init__()
         self._buffer = bytearray()
 
+    def reset(self) -> None:
+        """Drop a partially received frame; the next ``a5`` opens a new one."""
+        self._buffer.clear()
+
     def feed(self, data: bytes) -> list[Frame]:
         """Decode the frames completed by ``data``."""
         frames: list[Frame] = []
@@ -86,6 +93,7 @@ class MasterCodec(Codec):
         length = FRAME_LENGTHS.get(buffer[TYPE_INDEX])
         if length is None:
             self._stats.unknown_types += 1
+            _LOGGER.debug("unknown frame type in %s, resynchronising", buffer.hex(" "))
             self._resync(frames)
         elif len(buffer) == length:
             self._complete(frames)
@@ -94,6 +102,7 @@ class MasterCodec(Codec):
         frame = bytes(self._buffer)
         if xor_checksum(frame) != 0:
             self._stats.checksum_errors += 1
+            _LOGGER.debug("checksum error in %s, resynchronising", frame.hex(" "))
             self._resync(frames)
             return
         self._buffer.clear()
@@ -104,6 +113,7 @@ class MasterCodec(Codec):
         )
         if decoded is None:
             self._stats.invalid_frames += 1
+            _LOGGER.debug("frame %s has fields the format cannot carry", frame.hex(" "))
         else:
             self._stats.frames += 1
             frames.append(decoded)
@@ -120,6 +130,7 @@ class MasterCodec(Codec):
         self, target: int, button: int, *, pressed: bool, emitter: int | None = None
     ) -> bytes:
         """Return the six-byte event frame that presses or releases a button."""
+        self._check_addresses(target, button, emitter)
         body = bytes(
             (
                 START,
@@ -136,10 +147,15 @@ class MasterCodec(Codec):
 
 def _decode_state(frame: bytes) -> StateFrame | None:
     module_byte = frame[3]
-    if module_byte & ~MODULE_MASK != STATE_MODULE_FLAG:
+    module = module_byte & MODULE_MASK
+    if (
+        module_byte & ~MODULE_MASK != STATE_MODULE_FLAG
+        or module == SCENARIO_MODULE_ADDRESS
+        or frame[8] & ~RELAYS_HIGH_MASK
+    ):
         return None
     return StateFrame(
-        module=module_byte & MODULE_MASK,
+        module=module,
         relays=frame[7] | frame[8] << 8,
         reserved=frame[5] << 8 | frame[6],
     )

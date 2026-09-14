@@ -60,6 +60,12 @@ EVENT_INVALID_BUTTON = "a5 ee 00 80 84 4f"
 STATE_INVALID_MODULE = "a5 5a 7f 00 81 01 00 00 00"
 # A state frame whose relay byte happens to be a5 (relays 1, 3, 6, 8 on).
 STATE_M1_RELAYS_A5 = "a5 bf 7f 40 81 01 00 a5 00"
+# A state frame whose checksum byte happens to be a5 (relays 3-6, 8-10 on).
+STATE_M1_CHECKSUM_A5 = "a5 a5 7f 40 81 01 00 bc 03"
+# Valid checksum, bits set in the second relay byte beyond relays 9 and 10.
+STATE_PHANTOM_RELAYS = "a5 e5 7f 40 81 01 00 00 ff"
+# Valid checksum, state report from the virtual scenario module (never emitted).
+STATE_SCENARIO_MODULE = "a5 1d 7f 47 81 01 00 00 00"
 # Legacy two-byte frames, as an old-firmware bus would emit them.
 LEGACY_PRESS_M1_R1 = "50 00"
 LEGACY_RELEASE_M1_R1 = "50 80"
@@ -73,6 +79,9 @@ def hall_capture() -> bytes:
 
     The capture tool wrote one line per burst separated by silence, plus markers
     and its own status lines; only the hex payload of the burst lines is kept.
+    Between 08:01:56 and 08:02:44 two capture processes shared the port (see the
+    marker at 08:02:44 in the log): the bytes of that window are split across
+    odd-sized lines but concatenate back into complete, valid frames.
     """
     stream = bytearray()
     for line in HALL_CAPTURE.read_text().splitlines():

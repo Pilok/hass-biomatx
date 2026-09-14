@@ -161,3 +161,6 @@ cython_debug/
 
 # Tooling caches
 .ruff_cache/
+
+# Test fixtures are captures of the real bus: keep them despite *.log above.
+!tests/fixtures/*.log
