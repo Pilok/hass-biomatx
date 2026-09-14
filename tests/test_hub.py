@@ -14,7 +14,7 @@ import logging
 from typing import TYPE_CHECKING
 
 import pytest
-from serial import SerialException
+from serialx import SerialException
 
 from custom_components.biomatx import hub as hub_module
 from custom_components.biomatx.hub import (
