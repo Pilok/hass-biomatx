@@ -80,10 +80,13 @@ the project uses [Semantic Versioning](https://semver.org/).
   `CONFIRM_TIMEOUT = 3.5 s`, and without a confirmation the module's **next
   report** decides instead of the clock: a late report confirms (pressing
   again would have undone it), an unchanged report means the press was lost
-  and the button is pressed **once more**, no report at all is an error
-  without a blind second press. A module seen before but silent now gets one
-  `MODULE_TIMEOUT` to report again before its command is refused, and its
-  state is re-read when it returns (no press if the relay already moved).
+  and the button is pressed **once more** (logged as a warning), no report at
+  all within one more period is a *module unavailable* error, not a command
+  error, without a blind second press. A module seen before but silent now is
+  given a grace of one `MODULE_TIMEOUT` counted from its last report before
+  its command is refused (queued commands share that deadline), and its state
+  is re-read when it returns (no press if the relay already moved). After a
+  link loss every module is unknown again and refused until it reports.
   Observed on 2026-09-14: three false "did not confirm" errors on relays that
   had switched, and a module silent for 10 s under a burst of commands whose
   restoration scene then skipped a relay.

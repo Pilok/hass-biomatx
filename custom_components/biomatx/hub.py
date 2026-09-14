@@ -127,7 +127,7 @@ class BiomatxCommandError(BiomatxError):
 
 
 class BiomatxModuleUnavailableError(BiomatxError):
-    """The module has not reported its state, so nothing can be commanded safely."""
+    """The module is not reporting (never did, or fell silent), nothing is commanded blind."""
 
 
 class BiomatxNotConfiguredError(BiomatxError):
@@ -734,7 +734,7 @@ class BiomatxHub:
         module = relay.module.address
         for attempt in range(2):
             if attempt:
-                _LOGGER.debug(
+                _LOGGER.warning(
                     "module %d relay %d did not move, pressing again",
                     module + 1,
                     relay.address + 1,
