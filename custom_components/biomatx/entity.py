@@ -49,6 +49,7 @@ class BiomatxEntity(Entity):
     ) -> None:
         """Bind to the hub of ``entry`` and to device ``(kind, module, address)``."""
         self._hub: BiomatxHub = entry.runtime_data.hub
+        self._module_address = module.address
         self._key: DeviceKey = (kind, module.address, address)
         self._attr_unique_id = f"{entry.entry_id}-{kind}-{module.address}-{address}"
         self._attr_device_info = module_device_info(
@@ -58,8 +59,8 @@ class BiomatxEntity(Entity):
 
     @property
     def available(self) -> bool:
-        """Return whether the serial link to the bus is up."""
-        return self._hub.connected
+        """Return whether the link is up and the module can be trusted (master)."""
+        return self._hub.connected and self._hub.module_available(self._module_address)
 
     async def async_added_to_hass(self) -> None:
         """Follow the device and the link once the entity is registered."""

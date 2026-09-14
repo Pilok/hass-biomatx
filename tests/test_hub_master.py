@@ -307,7 +307,23 @@ async def test_cross_module_event_updates_the_target_button(
     fake_serial.feed(fm.WALL_PRESS_M2_TO_M1_R5)
     await settle()
     assert running.switch(0, 4).pressed is True
+    assert running.switch(0, 4).emitter == 1
+    assert running.switch(0, 4).events == 1
     assert running.switch(1, 4).pressed is False
+    fake_serial.feed(fm.WALL_RELEASE_M2_TO_M1_R5)
+    await settle()
+    assert running.switch(0, 4).events == 2
+
+
+async def test_scenario_module_is_available_whenever_the_link_is_up(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """The virtual module never reports; its buttons live as long as the link does."""
+    assert running.module_available(7) is True
+    fake_serial.fail_open_always = OSError("unplugged")
+    fake_serial.drop_link()
+    await settle()
+    assert running.module_available(7) is False
 
 
 async def test_all_off_scenario_event_does_not_invent_state(

@@ -8,6 +8,17 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Lights on the master firmware show the **real state** reported by their
+  module: no `assumed_state`, no state restored across restarts, `unavailable`
+  until the module's first report and whenever it stays silent for 10 s
+  (each module independently), and after the serial link drops. On the legacy
+  firmware the lights keep their inferred, assumed and restored state.
+- `event` platform: one event entity per button of each module ("Button N")
+  and per scenario of the virtual module ("Scenario N"), device class
+  `button`, event types `pressed` and `released`, attribute `emitter_module`
+  (1-based module the physical button or detector is wired on). Works on both
+  firmwares. Unique ids `{entry_id}-switch-{module}-{button}`, the ids the
+  upstream `binary_sensor` entities were migrated to.
 - `hub.py` on the `protocol/` codecs. **Master firmware**: relay state comes
   from the state reports only (a report updates the relays that changed and
   wakes their listeners), a command sends press then release and waits up to

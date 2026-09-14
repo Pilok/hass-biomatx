@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.LIGHT]
+PLATFORMS: list[Platform] = [Platform.EVENT, Platform.LIGHT]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 CURRENT_ENTRY_VERSION = 2
 

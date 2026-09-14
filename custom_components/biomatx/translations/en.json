@@ -44,6 +44,30 @@
       "relay": {
         "name": "Relay {number}"
       }
+    },
+    "event": {
+      "button": {
+        "name": "Button {number}",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Pressed",
+              "released": "Released"
+            }
+          }
+        }
+      },
+      "scenario": {
+        "name": "Scenario {number}",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Pressed",
+              "released": "Released"
+            }
+          }
+        }
+      }
     }
   },
   "exceptions": {

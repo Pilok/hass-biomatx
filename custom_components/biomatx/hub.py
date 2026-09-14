@@ -252,11 +252,12 @@ class BiomatxHub:
 
         Legacy modules never report, so the link is the only signal. Master
         modules are available from their first state report until they stay
-        silent for ``MODULE_TIMEOUT``.
+        silent for ``MODULE_TIMEOUT``. The scenario module is virtual and never
+        reports: it is available whenever the link is.
         """
         if not self._connected:
             return False
-        if not self.reports_state:
+        if not self.reports_state or address == SCENARIO_MODULE_ADDRESS:
             return True
         return self._module_up.get(address, False)
 
@@ -511,6 +512,8 @@ class BiomatxHub:
         )
         switch = self._installation.switch(frame.target, frame.button)
         switch.pressed = frame.pressed
+        switch.emitter = frame.emitter
+        switch.events += 1
         if not self.reports_state:
             self._infer_from_press(frame)
         self._notify(("switch", frame.target, frame.button))
