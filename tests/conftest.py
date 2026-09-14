@@ -50,7 +50,7 @@ def _fast_bus(monkeypatch: pytest.MonkeyPatch) -> None:
     """Remove the frame gap and reconnection delays so tests run instantly."""
     monkeypatch.setattr(hub_module, "FRAME_GAP", 0)
     monkeypatch.setattr(hub_module, "RECONNECT_DELAYS", (0,))
-    monkeypatch.setattr(hub_module, "CONFIRM_TIMEOUT", 0.05)
+    monkeypatch.setattr(hub_module, "CONFIRM_TIMEOUT", 0.1)
 
 
 @pytest.fixture

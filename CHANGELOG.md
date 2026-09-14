@@ -6,21 +6,6 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Fixed
-
-- Master commands are no longer declared failed after 2 s. A module may only
-  answer at its next periodic report (3 s): the confirmation now waits
-  `CONFIRM_TIMEOUT = 3.5 s`, and without a confirmation the module's **next
-  report** decides instead of the clock: a late report confirms (pressing
-  again would have undone it), an unchanged report means the press was lost
-  and the button is pressed **once more**, no report at all is an error
-  without a blind second press. A module seen before but silent now gets one
-  `MODULE_TIMEOUT` to report again before its command is refused, and its
-  state is re-read when it returns (no press if the relay already moved).
-  Observed on 2026-09-14: three false "did not confirm" errors on relays that
-  had switched, and a module silent for 10 s under a burst of commands whose
-  restoration scene then skipped a relay.
-
 ### Added
 
 - Lights on the master firmware show the **real state** reported by their
@@ -87,6 +72,21 @@ the project uses [Semantic Versioning](https://semver.org/).
   showroom capture of 2026-09-14 (653 state reports, 22 events) is replayed in
   the tests at every read boundary. Nothing uses the package yet; the hub
   switches to it in the next change.
+
+### Fixed
+
+- Master commands are no longer declared failed after 2 s. A module may only
+  answer at its next periodic report (3 s): the confirmation now waits
+  `CONFIRM_TIMEOUT = 3.5 s`, and without a confirmation the module's **next
+  report** decides instead of the clock: a late report confirms (pressing
+  again would have undone it), an unchanged report means the press was lost
+  and the button is pressed **once more**, no report at all is an error
+  without a blind second press. A module seen before but silent now gets one
+  `MODULE_TIMEOUT` to report again before its command is refused, and its
+  state is re-read when it returns (no press if the relay already moved).
+  Observed on 2026-09-14: three false "did not confirm" errors on relays that
+  had switched, and a module silent for 10 s under a burst of commands whose
+  restoration scene then skipped a relay.
 
 ## [1.0.0-beta.1] - 2026-09-14
 

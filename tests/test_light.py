@@ -376,13 +376,21 @@ async def test_master_turn_on_not_confirmed_raises_translated_error(
     await hass.async_block_till_done()
     task = hass.async_create_task(turn(hass, "turn_on", M1_R1))
     for _press in range(2):
-        await asyncio.sleep(hub_module.CONFIRM_TIMEOUT * 2)
+        await asyncio.sleep(
+            hub_module.CONFIRM_TIMEOUT * 1.5
+        )  # inside the judging window
         fake_serial.feed(fm.STATE_M1_ALL_OFF)  # alive, but the relay did not move
         await settle()
     with pytest.raises(HomeAssistantError) as excinfo:
         await task
     assert excinfo.value.translation_key == "not_confirmed"
     assert hass.states.get(M1_R1).state == STATE_OFF
+    assert fake_serial.frames_written(6) == [
+        fm.PRESS_M1_R1,
+        fm.RELEASE_M1_R1,
+        fm.PRESS_M1_R1,
+        fm.RELEASE_M1_R1,
+    ]
 
 
 async def test_master_turn_on_before_the_module_reported_raises_translated_error(

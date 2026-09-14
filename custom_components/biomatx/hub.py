@@ -11,9 +11,12 @@ never report state: the hub infers it from the presses it sees and sends, and
 a command flips the inferred state as soon as the press frame is written. On
 the **master** firmware every module reports its relays every 3 s and after
 each change: the hub takes state from those reports only, a command waits for
-the report that confirms it, and a module silent for ``MODULE_TIMEOUT`` is
-unavailable. When the protocol is not known yet, the hub listens and detects
-it from the first valid frame.
+the report that confirms it (the module's next report decides when none comes
+in time: late confirmation, one more press if the relay did not move, error if
+the module fell silent), and a module silent for ``MODULE_TIMEOUT`` is
+unavailable, with one more ``MODULE_TIMEOUT`` of grace during which a command
+waits for its return instead of being refused. When the protocol is not known
+yet, the hub listens and detects it from the first valid frame.
 
 Transport notes. ``serialx`` (the serial library of Home Assistant core)
 opens USB serial devices with exclusive access and reports write errors
@@ -120,7 +123,7 @@ class BiomatxProtocolUnknownError(BiomatxLinkError):
 
 
 class BiomatxCommandError(BiomatxError):
-    """The module did not report the commanded state in time."""
+    """Two presses left the relay unmoved according to the module's own reports."""
 
 
 class BiomatxModuleUnavailableError(BiomatxError):
@@ -461,6 +464,7 @@ class BiomatxHub:
             timer.cancel()
         self._module_timers.clear()
         self._module_up.clear()
+        self._last_seen.clear()
 
     # --- receiving --------------------------------------------------------------
 
@@ -685,19 +689,28 @@ class BiomatxHub:
         """
         Make sure ``module`` has a current state before acting on it.
 
-        A module that never reported is refused: a default or restored relay
-        state is not a bus fact. A module seen before but silent now (it stayed
-        quiet for 10 s under a burst of commands on 2026-09-14) gets one
-        ``MODULE_TIMEOUT`` to report again; nothing is written meanwhile.
-        Callers hold ``_send_lock``.
+        A module that never reported (or not since the link came back) is
+        refused: a default or restored relay state is not a bus fact. A module
+        seen before but silent now (module 3 stayed quiet for 10 s under a
+        burst of commands on 2026-09-14) is given a grace of one more
+        ``MODULE_TIMEOUT`` after it was declared silent, counted from its last
+        report so that queued commands share the same deadline instead of each
+        waiting a full timeout; nothing is written meanwhile. Callers hold
+        ``_send_lock``.
         """
         if self.module_available(module):
             return
-        if module not in self._last_seen:
+        last_seen = self._last_seen.get(module)
+        if last_seen is None:
             msg = f"module {module + 1} has not reported its state"
             raise BiomatxModuleUnavailableError(msg)
+        deadline = last_seen + 2 * self._module_timeout
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            msg = f"module {module + 1} is not reporting"
+            raise BiomatxModuleUnavailableError(msg)
         _LOGGER.debug("module %d is silent, waiting for its next report", module + 1)
-        if await self._await_report(module, _any_report, self._module_timeout) is None:
+        if await self._await_report(module, _any_report, remaining) is None:
             msg = f"module {module + 1} is not reporting"
             raise BiomatxModuleUnavailableError(msg)
 
@@ -708,9 +721,15 @@ class BiomatxHub:
         The confirmation is registered before the press is written: the module
         often answers within the press/release gap, and that report must count.
         Without a confirmation in ``CONFIRM_TIMEOUT``, the next report of the
-        module decides: it may confirm late (pressing again would undo it), or
-        show the press had no effect (a lost frame: press once more). A module
-        that stops reporting is not pressed blind. Callers hold ``_send_lock``.
+        module decides, awaited for one more ``CONFIRM_TIMEOUT`` so a command
+        never holds the bus lock for more than four periods: it may confirm
+        late (pressing again would undo it), or show the press had no effect
+        (a lost frame: press once more). A module that stops reporting is not
+        pressed blind. Assumed: a report received 3.5 s after the press shows
+        the post-press state, since the module acts on the press at once and a
+        frame does not sit on a 19200 baud bus; a lost change report is then
+        followed by a periodic one carrying the same state. Callers hold
+        ``_send_lock``.
         """
         module = relay.module.address
         for attempt in range(2):
@@ -725,13 +744,13 @@ class BiomatxHub:
                 is not None
             ):
                 return
-            fresh = await self._await_report(module, _any_report, self._module_timeout)
+            fresh = await self._await_report(module, _any_report, self._confirm_timeout)
             if fresh is None:
                 msg = (
                     f"module {module + 1} did not confirm the command "
                     "and stopped reporting"
                 )
-                raise BiomatxCommandError(msg)
+                raise BiomatxModuleUnavailableError(msg)
             if confirmed(fresh):
                 return
         msg = f"module {module + 1} did not confirm the command after two presses"
@@ -746,11 +765,16 @@ class BiomatxHub:
         self._confirmations.append(entry)
         try:
             await self._press_and_release(module, switch)
-            return await asyncio.wait_for(future, timeout=self._confirm_timeout)
-        except TimeoutError:
-            return None
+            try:
+                return await asyncio.wait_for(future, timeout=self._confirm_timeout)
+            except TimeoutError:
+                return None
         finally:
             self._confirmations.remove(entry)
+            if future.done() and not future.cancelled():
+                # A write failure marks the link lost, which fails this future
+                # too; read the exception so the loop does not log it as lost.
+                future.exception()
 
     def _flip(self, relay: Relay) -> Callable[[], None]:
         def _apply() -> None:
@@ -764,7 +788,9 @@ class BiomatxHub:
         Simulate a button press for ``relay``.
 
         Legacy: the inferred state flips with the press. Master: the call
-        returns once the module reports the relay in the other state.
+        returns once the module reports the relay in the other state, with
+        the same late-report, second-press and silent-module handling as
+        ``async_set_relay``.
         """
         async with self._send_lock:
             if not self.reports_state:
