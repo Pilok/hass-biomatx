@@ -1,7 +1,8 @@
-"""Tests for the light platform: one assumed-state light per relay."""
+"""Tests for the light platform: one light per relay, real or inferred state."""
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from homeassistant.components.light import ATTR_SUPPORTED_COLOR_MODES, ColorMode
@@ -20,6 +21,7 @@ from homeassistant.helpers.entity_platform import async_get_platforms
 import pytest
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
+    async_fire_time_changed,
     mock_restore_cache,
 )
 
@@ -28,6 +30,7 @@ from .conftest import MODULE_COUNT
 from .fake_serial import settle
 
 if TYPE_CHECKING:
+    from freezegun.api import FrozenDateTimeFactory
     from homeassistant.core import HomeAssistant
 
     from .conftest import SetupIntegration
@@ -221,6 +224,138 @@ async def test_lights_unavailable_on_link_loss_and_back_after_reconnect(
     assert hass.states.get(M1_R1).state == STATE_ON
 
 
+M1_R2 = "light.biomatx_module_1_relay_2"
+
+
+async def test_master_light_reports_real_state_without_assumed_state(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+    master_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """On master the light shows what the module reports, as a real state."""
+    await setup_integration(master_config_entry)
+    fake_serial.feed(fm.STATE_HOUSE_M1)  # relay 2 on
+    await hass.async_block_till_done()
+    assert hass.states.get(M1_R2).state == STATE_ON
+    assert hass.states.get(M1_R1).state == STATE_OFF
+    assert ATTR_ASSUMED_STATE not in hass.states.get(M1_R2).attributes
+    fake_serial.feed(fm.STATE_M1_ALL_OFF)
+    await hass.async_block_till_done()
+    assert hass.states.get(M1_R2).state == STATE_OFF
+
+
+async def test_master_lights_are_unavailable_until_their_module_reports(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+    master_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """Each module earns availability with its first report, independently."""
+    await setup_integration(master_config_entry)
+    assert hass.states.get(M1_R1).state == STATE_UNAVAILABLE
+    assert hass.states.get(M2_R8).state == STATE_UNAVAILABLE
+    fake_serial.feed(fm.STATE_M1_ALL_OFF)
+    await hass.async_block_till_done()
+    assert hass.states.get(M1_R1).state == STATE_OFF
+    assert hass.states.get(M2_R8).state == STATE_UNAVAILABLE
+
+
+async def test_master_light_goes_unavailable_when_its_module_stays_silent(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    setup_integration: SetupIntegration,
+    master_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """Ten seconds without a report: the module's lights are unavailable, others not."""
+    await setup_integration(master_config_entry)
+    fake_serial.feed(fm.STATE_M1_R1_ON + fm.STATE_M2_ALL_OFF)
+    await hass.async_block_till_done()
+    assert hass.states.get(M1_R1).state == STATE_ON
+    freezer.tick(timedelta(seconds=6))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    fake_serial.feed(fm.STATE_M2_ALL_OFF)  # module 2 keeps reporting
+    await hass.async_block_till_done()
+    freezer.tick(timedelta(seconds=5))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert hass.states.get(M1_R1).state == STATE_UNAVAILABLE
+    assert hass.states.get(M2_R8).state == STATE_OFF
+    fake_serial.feed(fm.STATE_M1_R1_ON)
+    await hass.async_block_till_done()
+    assert hass.states.get(M1_R1).state == STATE_ON
+
+
+async def test_master_light_does_not_restore_a_remembered_state(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+    master_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """A state from before the restart is not a bus fact; the report is."""
+    mock_restore_cache(hass, [State(M1_R1, STATE_ON)])
+    await setup_integration(master_config_entry)
+    assert hass.states.get(M1_R1).state == STATE_UNAVAILABLE
+    fake_serial.feed(fm.STATE_M1_ALL_OFF)
+    await hass.async_block_till_done()
+    assert hass.states.get(M1_R1).state == STATE_OFF
+    assert fake_serial.frames_written() == []
+
+
+async def test_runtime_detection_marks_unreported_modules_unavailable(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+    undetected_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """The production entry stores no protocol: entities must follow the detection."""
+    await setup_integration(undetected_config_entry)
+    before = hass.states.get(M2_R8)
+    assert before.state == STATE_OFF
+    assert before.attributes[ATTR_ASSUMED_STATE] is True
+    fake_serial.feed(fm.STATE_HOUSE_M1)
+    await hass.async_block_till_done()
+    assert hass.states.get(M1_R2).state == STATE_ON
+    assert ATTR_ASSUMED_STATE not in hass.states.get(M1_R2).attributes
+    assert hass.states.get(M2_R8).state == STATE_UNAVAILABLE
+    fake_serial.feed(fm.STATE_M2_ALL_OFF)
+    await hass.async_block_till_done()
+    assert hass.states.get(M2_R8).state == STATE_OFF
+
+
+async def test_runtime_detection_stores_the_protocol_in_the_entry(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+    undetected_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """The next start must not go through the ambiguous window again."""
+    entry = await setup_integration(undetected_config_entry)
+    assert "protocol" not in entry.data
+    fake_serial.feed(fm.STATE_M1_ALL_OFF)
+    await hass.async_block_till_done()
+    assert entry.data["protocol"] == "master"
+
+
+async def test_light_restores_its_state_while_the_protocol_is_unknown(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+    undetected_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """A silent legacy bus may take hours to detect: restore first, correct later."""
+    mock_restore_cache(hass, [State(M1_R1, STATE_ON)])
+    await setup_integration(undetected_config_entry)
+    assert hass.states.get(M1_R1).state == STATE_ON
+    fake_serial.feed(frames.PRESS_M1_R8 + frames.RELEASE_M1_R8)  # legacy detected
+    await hass.async_block_till_done()
+    assert hass.states.get(M1_R1).state == STATE_ON
+    assert hass.states.get(M1_R8).state == STATE_ON
+    assert hass.states.get(M1_R1).attributes[ATTR_ASSUMED_STATE] is True
+
+
 async def test_master_turn_on_not_confirmed_raises_translated_error(
     hass: HomeAssistant,
     setup_integration: SetupIntegration,
@@ -243,10 +378,20 @@ async def test_master_turn_on_before_the_module_reported_raises_translated_error
     master_config_entry: MockConfigEntry,
     fake_serial: FakeSerialLink,
 ) -> None:
-    """Until the module has reported, its state is unknown and commands are refused."""
+    """
+    Until the module has reported, its state is unknown and commands are refused.
+
+    The entity is unavailable, so Home Assistant would not call the service;
+    the entity is driven directly, as in the race where the module went silent
+    between the availability check and the command.
+    """
     await setup_integration(master_config_entry)
+    assert hass.states.get(M1_R1).state == STATE_UNAVAILABLE
+    platform = next(
+        p for p in async_get_platforms(hass, "biomatx") if p.domain == "light"
+    )
     with pytest.raises(HomeAssistantError) as excinfo:
-        await turn(hass, "turn_on", M1_R1)
+        await platform.entities[M1_R1].async_turn_on()
     assert excinfo.value.translation_key == "module_unavailable"
     assert fake_serial.frames_written() == []
 

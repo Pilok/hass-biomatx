@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.LIGHT]
+PLATFORMS: list[Platform] = [Platform.EVENT, Platform.LIGHT]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 CURRENT_ENTRY_VERSION = 2
 
@@ -83,6 +83,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: BiomatxConfigEntry) -> b
         name="BioMatX bus",
     )
     entry.runtime_data = BiomatxData(hub=hub, hub_device_id=hub_device.id)
+    if stored_protocol is None:
+
+        @callback
+        def _store_protocol(protocol: Protocol) -> None:
+            """Remember the detected protocol so the next start skips detection."""
+            hass.config_entries.async_update_entry(
+                entry, data={**entry.data, CONF_PROTOCOL: protocol.value}
+            )
+
+        entry.async_on_unload(hub.add_protocol_listener(_store_protocol))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     # Start reading only once the entities exist: frames received meanwhile stay
     # buffered in the transport and are applied to entities that can show them.

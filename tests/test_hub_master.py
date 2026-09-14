@@ -307,7 +307,23 @@ async def test_cross_module_event_updates_the_target_button(
     fake_serial.feed(fm.WALL_PRESS_M2_TO_M1_R5)
     await settle()
     assert running.switch(0, 4).pressed is True
+    assert running.switch(0, 4).emitter == 1
+    assert running.switch(0, 4).events == 1
     assert running.switch(1, 4).pressed is False
+    fake_serial.feed(fm.WALL_RELEASE_M2_TO_M1_R5)
+    await settle()
+    assert running.switch(0, 4).events == 2
+
+
+async def test_scenario_module_is_available_whenever_the_link_is_up(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """The virtual module never reports; its buttons live as long as the link does."""
+    assert running.module_available(7) is True
+    fake_serial.fail_open_always = OSError("unplugged")
+    fake_serial.drop_link()
+    await settle()
+    assert running.module_available(7) is False
 
 
 async def test_all_off_scenario_event_does_not_invent_state(
@@ -606,6 +622,30 @@ async def test_detection_survives_a_long_run_of_noise(
     assert hub.protocol is Protocol.MASTER
     assert hub.module_available(0) is True
     assert hub.bytes_dropped == 2000  # trimmed bytes are counted too
+    await stop_hub(hub, task)
+
+
+async def test_protocol_listeners_are_told_and_a_failing_one_is_logged(
+    fake_serial: FakeSerialLink, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The entry stores the detected protocol via a listener; a bug there is logged."""
+    hub = make_hub(protocol=None)
+    task = await run_hub(hub)
+    seen: list[Protocol] = []
+
+    def _boom(protocol: Protocol) -> None:
+        del protocol
+        msg = "listener gone"
+        raise RuntimeError(msg)
+
+    hub.add_protocol_listener(_boom)
+    unsubscribe = hub.add_protocol_listener(seen.append)
+    fake_serial.feed(fm.STATE_M1_ALL_OFF)
+    await settle()
+    assert seen == [Protocol.MASTER]
+    assert hub.module_available(0) is True
+    assert any("protocol listener failed" in r.getMessage() for r in caplog.records)
+    unsubscribe()
     await stop_hub(hub, task)
 
 

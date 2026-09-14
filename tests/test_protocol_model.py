@@ -42,6 +42,16 @@ def test_relay_and_switch_lookup_by_address() -> None:
     assert switch.released is True
 
 
+def test_switch_remembers_its_last_emitter_and_counts_events() -> None:
+    """Event entities need the emitter and a way to tell a new event from a refresh."""
+    switch = Installation(2).switch(1, 0)
+    assert switch.emitter == 1  # its own module until a frame says otherwise
+    assert switch.events == 0
+    switch.emitter = 0
+    switch.events += 1
+    assert repr(switch) == "<Switch module=1 address=0 pressed=False>"
+
+
 def test_module_lookup_covers_configured_and_scenario_modules_only() -> None:
     """Module 4 of a 2-module bus does not exist; module 7 always does."""
     installation = Installation(2)

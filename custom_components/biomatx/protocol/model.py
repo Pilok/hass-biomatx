@@ -16,13 +16,17 @@ MAX_MODULE_ADDRESS = 7
 class Switch:
     """A button of a module: a relay button or a scenario button."""
 
-    __slots__ = ("address", "module", "pressed")
+    __slots__ = ("address", "emitter", "events", "module", "pressed")
 
     def __init__(self, module: Module, address: int) -> None:
         """Create the released button ``address`` of ``module``."""
         self.module = module
         self.address = address
         self.pressed = False
+        self.emitter = module.address
+        """0-based module the last press or release was emitted by; its own at first."""
+        self.events = 0
+        """Number of press and release events seen, so a refresh is not an event."""
 
     @property
     def released(self) -> bool:

@@ -87,6 +87,18 @@ def master_config_entry() -> MockConfigEntry:
 
 
 @pytest.fixture
+def undetected_config_entry() -> MockConfigEntry:
+    """Return a version 2 entry without a stored protocol: today's production entry."""
+    return MockConfigEntry(
+        domain=DOMAIN,
+        title="BioMatX",
+        unique_id=URL,
+        version=2,
+        data={"device": URL, CONF_MODULE_COUNT: MODULE_COUNT},
+    )
+
+
+@pytest.fixture
 def setup_integration(
     hass: HomeAssistant,
     fake_serial: FakeSerialLink,

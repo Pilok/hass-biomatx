@@ -1,4 +1,4 @@
-"""Light platform: one assumed-state light per BioMatX relay."""
+"""Light platform: one light per BioMatX relay."""
 
 from __future__ import annotations
 
@@ -36,9 +36,15 @@ async def async_setup_entry(
 
 
 class BiomatxLight(BiomatxEntity, LightEntity, RestoreEntity):
-    """A relay driven by simulated button presses; its state is inferred."""
+    """
+    A relay driven by simulated button presses.
 
-    _attr_assumed_state = True
+    On the master firmware the state is the one the module reports. On the
+    legacy firmware it is inferred from the presses seen and sent, declared as
+    assumed, and restored across restarts because the bus cannot tell it.
+    ``RestoreEntity`` is a base class for that legacy path only.
+    """
+
     _attr_color_mode = ColorMode.ONOFF
     _attr_supported_color_modes = frozenset({ColorMode.ONOFF})
     _attr_translation_key = "relay"
@@ -50,22 +56,35 @@ class BiomatxLight(BiomatxEntity, LightEntity, RestoreEntity):
 
     @property
     def is_on(self) -> bool:
-        """Return the inferred relay state."""
+        """Return the relay state, reported (master) or inferred (legacy)."""
         return self._relay.on
 
+    @property
+    def assumed_state(self) -> bool:
+        """Return whether the state is inferred rather than reported by the module."""
+        return not self._hub.reports_state
+
     async def async_added_to_hass(self) -> None:
-        """Restore the last known state before following the bus: it cannot tell us."""
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state in (STATE_ON, STATE_OFF):
-            self._relay.on = last_state.state == STATE_ON
+        """
+        Restore the last known state unless the modules report theirs.
+
+        A bus whose protocol is not detected yet is treated as legacy: a legacy
+        bus stays silent until someone presses a button, so waiting would lose
+        the only chance to restore. If the bus turns out to be master, the
+        detection marks every module unavailable until its first report.
+        """
+        if not self._hub.reports_state:
+            last_state = await self.async_get_last_state()
+            if last_state is not None and last_state.state in (STATE_ON, STATE_OFF):
+                self._relay.on = last_state.state == STATE_ON
         await super().async_added_to_hass()
 
     async def async_turn_on(self, **kwargs: Any) -> None:  # noqa: ARG002  # HA signature
-        """Press the button unless the relay is already believed on."""
+        """Press the button unless the relay is already on."""
         await self._async_set(on=True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:  # noqa: ARG002  # HA signature
-        """Press the button unless the relay is already believed off."""
+        """Press the button unless the relay is already off."""
         await self._async_set(on=False)
 
     async def _async_set(self, *, on: bool) -> None:
