@@ -17,6 +17,8 @@ import pytest
 from custom_components.biomatx.hub import (
     BiomatxCommandError,
     BiomatxHub,
+    BiomatxLinkError,
+    BiomatxModuleUnavailableError,
     BiomatxNotSupportedError,
     BiomatxProtocolUnknownError,
 )
@@ -31,7 +33,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
 
 CONFIRM_TIMEOUT = 0.2
-MODULE_TIMEOUT = 0.1
+MODULE_TIMEOUT = 0.3
 COMMAND_FRAME_LENGTH = 6
 
 
@@ -39,6 +41,7 @@ def make_hub(
     module_count: int = 4,
     all_off_address: int | None = 0,
     protocol: Protocol | None = Protocol.MASTER,
+    frame_gap: float = 0,
 ) -> BiomatxHub:
     """Build a master hub with short timeouts, so tests run fast."""
     return BiomatxHub(
@@ -46,11 +49,20 @@ def make_hub(
         module_count,
         all_off_address,
         protocol=protocol,
-        frame_gap=0,
+        frame_gap=frame_gap,
         reconnect_delays=(0,),
         confirm_timeout=CONFIRM_TIMEOUT,
         module_timeout=MODULE_TIMEOUT,
     )
+
+
+async def report(
+    hub: BiomatxHub, fake_serial: FakeSerialLink, *hex_frames: str
+) -> None:
+    """Feed state reports and let the hub apply them."""
+    fake_serial.feed(" ".join(hex_frames))
+    await settle()
+    assert hub.frames_received >= 1
 
 
 async def run_hub(hub: BiomatxHub) -> asyncio.Task[None]:
@@ -173,7 +185,7 @@ async def test_silent_module_becomes_unavailable_then_returns(
     fake_serial.feed(fm.STATE_M2_ALL_OFF)
     await asyncio.sleep(MODULE_TIMEOUT * 0.6)
     fake_serial.feed(fm.STATE_M2_ALL_OFF)  # module 2 keeps talking
-    await asyncio.sleep(MODULE_TIMEOUT * 0.6)
+    await asyncio.sleep(MODULE_TIMEOUT * 0.55)
     assert running.module_available(0) is False
     assert running.module_available(1) is True
     assert events == ["m1"]
@@ -195,6 +207,34 @@ async def test_link_loss_makes_every_module_unavailable(
     await settle()
     assert running.connected is False
     assert running.module_available(0) is False
+
+
+async def test_reconnection_forgets_module_availability_until_a_fresh_report(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """After an outage nothing is known again: no stale availability, no stale timer."""
+    fake_serial.feed(fm.STATE_M1_R1_ON)
+    await settle()
+    fake_serial.drop_link()
+    await settle(50)
+    assert running.connected is True
+    assert running.module_available(0) is False
+    assert running._module_timers == {}
+    fake_serial.feed(fm.STATE_M1_R1_ON)
+    await settle()
+    assert running.module_available(0) is True
+
+
+async def test_close_right_after_a_report_leaves_no_timer_behind(
+    fake_serial: FakeSerialLink,
+) -> None:
+    """Bytes decoded while closing must not arm a timer that fires on a dead hub."""
+    hub = make_hub()
+    task = await run_hub(hub)
+    fake_serial.feed(fm.STATE_M1_ALL_OFF)
+    await stop_hub(hub, task)
+    assert hub._module_timers == {}
+    assert hub.module_available(0) is False
 
 
 async def test_state_report_for_an_unconfigured_module_is_dropped(
@@ -319,6 +359,56 @@ async def test_set_relay_sends_press_release_and_waits_for_the_report(
     assert running.relay(0, 0).on is True
 
 
+async def test_report_arriving_during_the_frame_gap_confirms_the_command(
+    fake_serial: FakeSerialLink,
+) -> None:
+    """The module answers within the press/release gap: that report must count."""
+    hub = make_hub(frame_gap=0.05)
+    task = await run_hub(hub)
+    fake_serial.feed(fm.STATE_M1_ALL_OFF)
+    await settle()
+    cmd = asyncio.create_task(hub.async_set_relay(hub.relay(0, 0), on=True))
+    await settle()
+    assert fake_serial.frames_written(COMMAND_FRAME_LENGTH) == [fm.PRESS_M1_R1]
+    fake_serial.feed(fm.STATE_M1_R1_ON)  # before the release is even written
+    await asyncio.wait_for(cmd, timeout=1)
+    assert hub.relay(0, 0).on is True
+    assert fake_serial.frames_written(COMMAND_FRAME_LENGTH) == [
+        fm.PRESS_M1_R1,
+        fm.RELEASE_M1_R1,
+    ]
+    await stop_hub(hub, task)
+
+
+async def test_command_on_a_module_that_never_reported_is_refused(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """A default or restored relay state is not a bus fact: do not act on it."""
+    with pytest.raises(BiomatxModuleUnavailableError):
+        await running.async_set_relay(running.relay(0, 0), on=False)
+    with pytest.raises(BiomatxModuleUnavailableError):
+        await running.async_toggle(running.relay(0, 0))
+    assert fake_serial.frames_written() == []
+    fake_serial.feed(fm.STATE_M2_ALL_OFF)  # another module reporting does not help
+    await settle()
+    with pytest.raises(BiomatxModuleUnavailableError):
+        await running.async_set_relay(running.relay(0, 0), on=True)
+
+
+async def test_link_loss_fails_a_pending_command_at_once(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """Unplugging during a confirmation is a link error, not a two-second timeout."""
+    fake_serial.feed(fm.STATE_M1_ALL_OFF)
+    await settle()
+    task = asyncio.create_task(running.async_set_relay(running.relay(0, 0), on=True))
+    await settle()
+    fake_serial.fail_open_always = OSError("unplugged")
+    fake_serial.drop_link()
+    with pytest.raises(BiomatxLinkError):
+        await asyncio.wait_for(task, timeout=CONFIRM_TIMEOUT / 2)
+
+
 async def test_set_relay_off_is_confirmed_by_a_report_without_the_bit(
     running: BiomatxHub, fake_serial: FakeSerialLink
 ) -> None:
@@ -337,6 +427,7 @@ async def test_set_relay_raises_when_no_report_confirms_it(
     running: BiomatxHub, fake_serial: FakeSerialLink
 ) -> None:
     """No confirmation within the timeout is an error, and the state is not touched."""
+    await report(running, fake_serial, fm.STATE_M1_ALL_OFF)
     with pytest.raises(BiomatxCommandError):
         await running.async_set_relay(running.relay(0, 0), on=True)
     assert fake_serial.frames_written(COMMAND_FRAME_LENGTH) == [
@@ -360,6 +451,7 @@ async def test_confirmation_ignores_reports_of_other_modules_and_relays(
     running: BiomatxHub, fake_serial: FakeSerialLink
 ) -> None:
     """Only a report of the commanded module with the wanted bit confirms."""
+    await report(running, fake_serial, fm.STATE_M1_ALL_OFF)
     task = asyncio.create_task(running.async_set_relay(running.relay(0, 0), on=True))
     await settle()
     fake_serial.feed(fm.STATE_M2_R1_ON + fm.STATE_M1_R5_ON)
@@ -393,6 +485,7 @@ async def test_commands_are_serialised_until_confirmed(
     running: BiomatxHub, fake_serial: FakeSerialLink
 ) -> None:
     """The second command is not written before the first one is confirmed."""
+    await report(running, fake_serial, fm.STATE_M1_ALL_OFF, fm.STATE_M2_ALL_OFF)
     first = asyncio.create_task(running.async_set_relay(running.relay(0, 0), on=True))
     second = asyncio.create_task(running.async_set_relay(running.relay(1, 0), on=True))
     await settle()
@@ -512,4 +605,22 @@ async def test_detection_survives_a_long_run_of_noise(
     await settle()
     assert hub.protocol is Protocol.MASTER
     assert hub.module_available(0) is True
+    assert hub.bytes_dropped == 2000  # trimmed bytes are counted too
+    await stop_hub(hub, task)
+
+
+async def test_first_read_in_the_middle_of_a_master_report_does_not_latch_legacy(
+    fake_serial: FakeSerialLink,
+) -> None:
+    """``a5 18`` looks like a legacy frame; a half master frame keeps us undecided."""
+    hub = make_hub(protocol=None)
+    task = await run_hub(hub)
+    fake_serial.feed(fm.STATE_HOUSE_M1[:14])  # five bytes: a5 18 7f 40 81
+    await settle()
+    assert hub.protocol is None
+    fake_serial.feed(fm.STATE_HOUSE_M1[15:] + " " + fm.STATE_HOUSE_M2)
+    await settle()
+    assert hub.protocol is Protocol.MASTER
+    assert hub.relay(0, 1).on is True
+    assert hub.module_available(1) is True
     await stop_hub(hub, task)

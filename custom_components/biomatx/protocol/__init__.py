@@ -42,9 +42,14 @@ def detect(data: bytes) -> Protocol | None:
 
     The master codec is tried first: its frames carry a checksum, whereas a
     master frame such as ``a5 18 ...`` would pass for a legacy button frame.
+    For the same reason a sample that ends inside a master frame (a read that
+    landed mid-frame) gives no verdict: the caller must wait for more bytes.
     """
-    if MasterCodec().feed(data):
+    master = MasterCodec()
+    if master.feed(data):
         return Protocol.MASTER
+    if master.in_frame:
+        return None
     if LegacyCodec().feed(data):
         return Protocol.LEGACY
     return None

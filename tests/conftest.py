@@ -38,7 +38,7 @@ def _enable_custom_integrations(enable_custom_integrations: None) -> None:
 
 @pytest.fixture
 def fake_serial(monkeypatch: pytest.MonkeyPatch) -> FakeSerialLink:
-    """Replace pyserial's async opener with the in-memory link."""
+    """Replace serialx's async opener with the in-memory link."""
     link = FakeSerialLink()
     monkeypatch.setattr(serialx, "open_serial_connection", link.open_serial_connection)
     monkeypatch.setattr(asyncio, "open_connection", link.open_tcp_connection)
@@ -50,6 +50,7 @@ def _fast_bus(monkeypatch: pytest.MonkeyPatch) -> None:
     """Remove the frame gap and reconnection delays so tests run instantly."""
     monkeypatch.setattr(hub_module, "FRAME_GAP", 0)
     monkeypatch.setattr(hub_module, "RECONNECT_DELAYS", (0,))
+    monkeypatch.setattr(hub_module, "CONFIRM_TIMEOUT", 0.05)
 
 
 @pytest.fixture
@@ -65,6 +66,22 @@ def mock_config_entry() -> MockConfigEntry:
             CONF_MODULE_COUNT: MODULE_COUNT,
             CONF_ALL_OFF_ADDRESS: ALL_OFF_ADDRESS,
             CONF_PROTOCOL: "legacy",
+        },
+    )
+
+
+@pytest.fixture
+def master_config_entry() -> MockConfigEntry:
+    """Return a version 2 entry for a 4-module master bus."""
+    return MockConfigEntry(
+        domain=DOMAIN,
+        title="BioMatX",
+        unique_id=URL,
+        version=2,
+        data={
+            "device": URL,
+            CONF_MODULE_COUNT: MODULE_COUNT,
+            CONF_PROTOCOL: "master",
         },
     )
 

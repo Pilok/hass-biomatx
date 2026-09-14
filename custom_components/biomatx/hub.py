@@ -44,7 +44,6 @@ from .protocol import (
     detect,
 )
 from .protocol.model import (
-    BUTTONS_PER_MODULE,
     SCENARIO_MODULE_ADDRESS,
     Installation,
     Module,
@@ -72,7 +71,14 @@ READ_CHUNK = 64
 DETECT_BUFFER = 256
 """Bytes kept while the protocol is unknown; older bytes are dropped."""
 SCENARIO_EMITTER = 0
-"""Master scenario commands claim the first real module, like a wall button."""
+"""
+Emitter module claimed by master scenario commands.
+
+Unverified on hardware: the showroom's wall scenario button emitted as the
+module it was wired on (``07 81 84 40``); whether the virtual module 7 is
+accepted as emitter is unknown, so the first real module is used. Checked at
+verification stage 5 of the plan.
+"""
 SOCKET_URL_PREFIX = "socket://"
 
 type DeviceKind = Literal["relay", "switch"]
@@ -101,6 +107,10 @@ class BiomatxProtocolUnknownError(BiomatxLinkError):
 
 class BiomatxCommandError(BiomatxError):
     """The module did not report the commanded state in time."""
+
+
+class BiomatxModuleUnavailableError(BiomatxError):
+    """The module has not reported its state, so nothing can be commanded safely."""
 
 
 class BiomatxNotConfiguredError(BiomatxError):
@@ -164,6 +174,7 @@ class BiomatxHub:
         self._link_listeners: list[LinkListener] = []
         self._frames_received = 0
         self._frames_rejected = 0
+        self._bytes_discarded = 0
         self._noise_run = 0
         self._last_seen: dict[int, float] = {}
         self._module_up: dict[int, bool] = {}
@@ -205,7 +216,7 @@ class BiomatxHub:
     @property
     def bytes_dropped(self) -> int:
         """Return the number of stray bytes seen outside a frame since start."""
-        return self.stats.noise_bytes
+        return self.stats.noise_bytes + self._bytes_discarded
 
     @property
     def modules(self) -> list[Module]:
@@ -363,15 +374,14 @@ class BiomatxHub:
                 await self._wait_before_retry()
         finally:
             self._release_link()
+            self._forget_modules()
             self._set_connected(connected=False)
             self._run_task = None
 
     async def async_close(self) -> None:
         """Close the link and stop the reader loop without reconnecting."""
         self._closed.set()
-        for timer in self._module_timers.values():
-            timer.cancel()
-        self._module_timers.clear()
+        self._forget_modules()
         writer = self._release_link()
         self._set_connected(connected=False)
         task = self._run_task
@@ -412,7 +422,18 @@ class BiomatxHub:
             self.url,
             error if error is not None else "end of stream",
         )
+        self._forget_modules()
+        for _module, _confirmed, future in self._confirmations:
+            if not future.done():
+                future.set_exception(BiomatxLinkError(f"link to {self.url} lost"))
         self._set_connected(connected=False)
+
+    def _forget_modules(self) -> None:
+        """Forget the modules' availability; a fresh report earns it again."""
+        for timer in self._module_timers.values():
+            timer.cancel()
+        self._module_timers.clear()
+        self._module_up.clear()
 
     # --- receiving --------------------------------------------------------------
 
@@ -442,7 +463,10 @@ class BiomatxHub:
     def _detect_protocol(self, chunk: bytes) -> Codec | None:
         """Buffer ``chunk`` until a valid frame names the protocol."""
         self._detect_buffer += chunk
-        del self._detect_buffer[:-DETECT_BUFFER]
+        excess = len(self._detect_buffer) - DETECT_BUFFER
+        if excess > 0:
+            del self._detect_buffer[:excess]
+            self._bytes_discarded += excess
         protocol = detect(bytes(self._detect_buffer))
         if protocol is None:
             return None
@@ -524,6 +548,8 @@ class BiomatxHub:
     def _touch_module(self, address: int) -> None:
         """Record a state report: the module is alive for another timeout."""
         self._last_seen[address] = time.monotonic()
+        if self._closed.is_set():
+            return  # bytes decoded while closing must not arm a timer
         if (timer := self._module_timers.pop(address, None)) is not None:
             timer.cancel()
         self._module_timers[address] = asyncio.get_running_loop().call_later(
@@ -598,12 +624,23 @@ class BiomatxHub:
             codec.encode_button(module, switch, pressed=False, emitter=emitter)
         )
 
-    async def _await_confirmation(self, module: int, confirmed: Confirmation) -> None:
-        """Wait for a state report of ``module`` satisfying ``confirmed``."""
+    async def _confirmed_command(self, relay: Relay, confirmed: Confirmation) -> None:
+        """
+        Press ``relay``'s button and wait for the state report that confirms it.
+
+        The confirmation is registered before the press is written: the module
+        often answers within the press/release gap, and that report must count.
+        Callers hold ``_send_lock``.
+        """
+        module = relay.module.address
+        if not self.module_available(module):
+            msg = f"module {module + 1} has not reported its state"
+            raise BiomatxModuleUnavailableError(msg)
         future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         entry = (module, confirmed, future)
         self._confirmations.append(entry)
         try:
+            await self._press_and_release(module, relay.address)
             await asyncio.wait_for(future, timeout=self._confirm_timeout)
         except TimeoutError as err:
             msg = f"module {module + 1} did not confirm the command"
@@ -632,10 +669,8 @@ class BiomatxHub:
                 )
                 return
             was_on = relay.on
-            await self._press_and_release(relay.module.address, relay.address)
-            await self._await_confirmation(
-                relay.module.address,
-                lambda frame: frame.is_on(relay.address) != was_on,
+            await self._confirmed_command(
+                relay, lambda frame: frame.is_on(relay.address) != was_on
             )
 
     async def async_set_relay(self, relay: Relay, *, on: bool) -> None:
@@ -648,16 +683,19 @@ class BiomatxHub:
         ``BiomatxCommandError`` after ``CONFIRM_TIMEOUT``.
         """
         async with self._send_lock:
+            if not self.reports_state:
+                if relay.on != on:
+                    await self._press_and_release(
+                        relay.module.address, relay.address, self._flip(relay)
+                    )
+                return
+            if not self.module_available(relay.module.address):
+                msg = f"module {relay.module.address + 1} has not reported its state"
+                raise BiomatxModuleUnavailableError(msg)
             if relay.on == on:
                 return
-            if not self.reports_state:
-                await self._press_and_release(
-                    relay.module.address, relay.address, self._flip(relay)
-                )
-                return
-            await self._press_and_release(relay.module.address, relay.address)
-            await self._await_confirmation(
-                relay.module.address, lambda frame: frame.is_on(relay.address) == on
+            await self._confirmed_command(
+                relay, lambda frame: frame.is_on(relay.address) == on
             )
 
     async def async_activate_scenario(self, address: int) -> None:
@@ -711,12 +749,12 @@ class BiomatxHub:
 
 
 __all__ = [
-    "BUTTONS_PER_MODULE",
     "BiomatxCommandError",
     "BiomatxConnectionError",
     "BiomatxError",
     "BiomatxHub",
     "BiomatxLinkError",
+    "BiomatxModuleUnavailableError",
     "BiomatxNotConfiguredError",
     "BiomatxNotSupportedError",
     "BiomatxProtocolUnknownError",

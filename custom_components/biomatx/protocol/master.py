@@ -72,6 +72,11 @@ class MasterCodec(Codec):
         """Drop a partially received frame; the next ``a5`` opens a new one."""
         self._buffer.clear()
 
+    @property
+    def in_frame(self) -> bool:
+        """Return whether bytes of an unfinished frame are buffered."""
+        return bool(self._buffer)
+
     def feed(self, data: bytes) -> list[Frame]:
         """Decode the frames completed by ``data``."""
         frames: list[Frame] = []

@@ -50,6 +50,29 @@ def test_nothing_valid_detects_nothing(sample: str) -> None:
     assert detect(bytes.fromhex(sample)) is None
 
 
+def test_half_master_frame_keeps_detection_undecided() -> None:
+    """A read landing mid-frame must not be mistaken for legacy traffic."""
+    half = bytes.fromhex(fm.STATE_HOUSE_M1)[:5]
+    assert LegacyCodec().feed(half) != []  # the trap is real: a5 18 decodes
+    assert detect(half) is None
+    assert detect(bytes.fromhex(fm.STATE_HOUSE_M1)) is Protocol.MASTER
+
+
+def test_codecs_report_a_frame_in_flight() -> None:
+    """Callers can tell a silent bus from a frame still being received."""
+    master = MasterCodec()
+    assert master.in_frame is False
+    master.feed(bytes.fromhex(fm.STATE_HOUSE_M1)[:5])
+    assert master.in_frame is True
+    master.reset()
+    assert master.in_frame is False
+    legacy_codec = LegacyCodec()
+    legacy_codec.feed(bytes.fromhex(frames.PRESS_M1_R1)[:1])
+    assert legacy_codec.in_frame is True
+    legacy_codec.feed(bytes.fromhex(frames.PRESS_M1_R1)[1:])
+    assert legacy_codec.in_frame is False
+
+
 def test_codec_for_returns_a_fresh_codec_of_the_protocol() -> None:
     """The hub builds its codec from the stored protocol."""
     assert isinstance(codec_for(Protocol.MASTER), MasterCodec)

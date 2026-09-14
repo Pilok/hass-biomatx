@@ -11,7 +11,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN
 from .entity import BiomatxEntity
-from .hub import BiomatxLinkError
+from .hub import BiomatxCommandError, BiomatxLinkError, BiomatxModuleUnavailableError
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -74,4 +74,20 @@ class BiomatxLight(BiomatxEntity, LightEntity, RestoreEntity):
         except BiomatxLinkError as err:
             raise HomeAssistantError(
                 translation_domain=DOMAIN, translation_key="link_down"
+            ) from err
+        except BiomatxModuleUnavailableError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="module_unavailable",
+                translation_placeholders={
+                    "module": str(self._relay.module.address + 1)
+                },
+            ) from err
+        except BiomatxCommandError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="not_confirmed",
+                translation_placeholders={
+                    "module": str(self._relay.module.address + 1)
+                },
             ) from err

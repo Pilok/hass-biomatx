@@ -1,11 +1,11 @@
 """
-In-memory stand-in for ``serial_asyncio.open_serial_connection``.
+In-memory stand-in for ``serialx.open_serial_connection``.
 
 The hub only needs an ``asyncio.StreamReader`` to read from and an object with
 ``write`` / ``drain`` / ``close`` to write to. This fake provides both, records
 every byte written and every connection attempt, and lets a test feed frames,
 drop the link (EOF, as when the adapter is unplugged) or fail it with an
-exception (as pyserial does on I/O errors).
+exception (as the serial library does on I/O errors).
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ class FakeSerialLink:
     async def open_serial_connection(
         self, **kwargs: Any
     ) -> tuple[asyncio.StreamReader, FakeStreamWriter]:
-        """Mimic ``serial_asyncio.open_serial_connection``."""
+        """Mimic ``serialx.open_serial_connection``."""
         self.opens.append(kwargs)
         if self.hold_open is not None:
             await self.hold_open.wait()

@@ -49,9 +49,10 @@ mergeable only when all of them are green.
 5. **Never deploy to a Home Assistant instance from a session.** Deployment goes
    through HACS releases and the staged validation checklist in the project plan.
 6. **Never open a real serial port from tests.** Tests use `tests/fake_serial.py`.
-7. **Never call `biomatx.Bus.connect`, `.loop`, `.send_packet` or `.stop`.** The
-   integration owns the serial transport (`hub.py`); the `biomatx` package is used
-   only as a data model (`Packet`, `Module`, `Relay`, `Switch`). Grep before merging.
+7. **Never import the `biomatx` package.** The integration owns the serial
+   transport (`hub.py`) and the protocols and data model live in
+   `custom_components/biomatx/protocol/`, which imports neither Home Assistant nor
+   a serial library. Grep before merging.
 8. **Nothing goes upstream automatically.** Generic fixes may be prepared on a
    branch cut from `upstream/main`; opening a pull request against canatella is a
    human decision.

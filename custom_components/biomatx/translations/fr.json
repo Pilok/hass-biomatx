@@ -50,6 +50,12 @@
     "cannot_connect": {
       "message": "Impossible d'ouvrir le périphérique série BioMatX {device} : {error}"
     },
+    "module_unavailable": {
+      "message": "Le module BioMatX {module} n'a pas encore annoncé son état ; la commande n'a pas été envoyée."
+    },
+    "not_confirmed": {
+      "message": "Le module BioMatX {module} n'a pas confirmé la commande ; vérifiez la lampe."
+    },
     "link_down": {
       "message": "Le bus BioMatX n'est pas connecté ; la commande n'a pas été envoyée."
     }

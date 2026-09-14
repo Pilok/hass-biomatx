@@ -2,6 +2,8 @@
 
 from typing import Final
 
+from .protocol.model import BUTTONS_PER_MODULE
+
 DOMAIN: Final = "biomatx"
 
 CONF_MODULE_COUNT: Final = "module_count"
@@ -21,4 +23,4 @@ MODEL_SCENARIOS: Final = "Scenario module"
 
 MAX_MODULES: Final = 7
 """Module addresses 1-7 on the front panel; address 8 is the scenario module."""
-RELAYS_PER_MODULE: Final = 10
+RELAYS_PER_MODULE: Final = BUTTONS_PER_MODULE
