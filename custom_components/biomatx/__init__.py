@@ -93,7 +93,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BiomatxConfigEntry) -> b
             {
                 "entry_id": entry.entry_id,
                 "raw": frame.raw.hex(" "),
-                "reason": frame.reason,
+                "reason": str(frame.reason),
                 "target_module": _one_based(frame.target),
                 "emitter_module": _one_based(frame.emitter),
                 "output": _one_based(frame.button),

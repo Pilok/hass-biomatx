@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from custom_components.biomatx import hub as hub_module
 from custom_components.biomatx.hub import (
     BiomatxCommandError,
     BiomatxHub,
@@ -44,6 +43,7 @@ def make_hub(
     all_off_address: int | None = 0,
     protocol: Protocol | None = Protocol.MASTER,
     frame_gap: float = 0,
+    invalid_frame_log_interval: float | None = None,
 ) -> BiomatxHub:
     """Build a master hub with short timeouts, so tests run fast."""
     return BiomatxHub(
@@ -55,6 +55,7 @@ def make_hub(
         reconnect_delays=(0,),
         confirm_timeout=CONFIRM_TIMEOUT,
         module_timeout=MODULE_TIMEOUT,
+        invalid_frame_log_interval=invalid_frame_log_interval,
     )
 
 
@@ -121,9 +122,13 @@ def hub_messages(caplog: pytest.LogCaptureFixture, level: int) -> list[str]:
     ]
 
 
-def warnings_of(caplog: pytest.LogCaptureFixture) -> list[str]:
-    """Return the hub's WARNING messages captured so far."""
-    return hub_messages(caplog, logging.WARNING)
+def invalid_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Return the hub's WARNING lines about frames the format cannot carry."""
+    return [
+        message
+        for message in hub_messages(caplog, logging.WARNING)
+        if "bus frame" in message
+    ]
 
 
 # --- state reports -----------------------------------------------------------------
@@ -342,7 +347,7 @@ async def test_invalid_frame_is_a_warning_once_per_burst_then_debug(
     with caplog.at_level(logging.DEBUG, logger=HUB_LOGGER):
         fake_serial.feed(fm.PHANTOM_PRESS_M4_OUT11 + fm.PHANTOM_RELEASE_M4_OUT11)
         await settle()
-    warnings = warnings_of(caplog)
+    warnings = invalid_warnings(caplog)
     assert len(warnings) == 1
     assert "a5 e8 03 80 84 4a" in warnings[0]
     assert "module 4" in warnings[0]
@@ -355,27 +360,57 @@ async def test_invalid_frame_is_a_warning_once_per_burst_then_debug(
         if "a5 a8 03 80 84 0a" in message
     ]
     assert len(debugs) == 1
-    assert "output 11 released" in debugs[0]
+    assert "output 11" in debugs[0]
+    assert "released" in debugs[0]
 
 
 async def test_invalid_frame_warning_returns_after_the_quiet_interval(
-    running: BiomatxHub,
-    fake_serial: FakeSerialLink,
-    caplog: pytest.LogCaptureFixture,
-    monkeypatch: pytest.MonkeyPatch,
+    fake_serial: FakeSerialLink, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Once the interval has passed, the next frame warns again and counts the rest."""
+    hub = make_hub(invalid_frame_log_interval=0.05)
+    task = await run_hub(hub)
     with caplog.at_level(logging.WARNING, logger=HUB_LOGGER):
         fake_serial.feed(fm.PHANTOM_PRESS_M4_OUT11 + fm.PHANTOM_RELEASE_M4_OUT11)
         await settle()
-        assert len(warnings_of(caplog)) == 1
-        monkeypatch.setattr(hub_module, "INVALID_FRAME_LOG_INTERVAL", 0)
+        assert len(invalid_warnings(caplog)) == 1
+        await asyncio.sleep(0.06)
         fake_serial.feed(fm.PHANTOM_PRESS_M4_OUT11_FROM_M2)
         await settle()
-    warnings = warnings_of(caplog)
+    warnings = invalid_warnings(caplog)
     assert len(warnings) == 2
     assert "a5 e9 03 81 84 4a" in warnings[1]
     assert "1 more" in warnings[1]
+    await stop_hub(hub, task)
+
+
+async def test_reconnection_resets_the_invalid_frame_warning_throttle(
+    running: BiomatxHub, fake_serial: FakeSerialLink, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A frame right after a reconnection warns again: the link is a new context."""
+    with caplog.at_level(logging.WARNING, logger=HUB_LOGGER):
+        fake_serial.feed(fm.PHANTOM_PRESS_M4_OUT11)
+        await settle()
+        fake_serial.drop_link()
+        await settle(50)
+        assert running.connected is True
+        fake_serial.feed(fm.PHANTOM_PRESS_M4_OUT11)
+        await settle()
+    warnings = invalid_warnings(caplog)
+    assert len(warnings) == 2
+    assert "more since" not in warnings[1]
+
+
+async def test_unreadable_invalid_frame_is_logged_without_fields(
+    running: BiomatxHub, fake_serial: FakeSerialLink, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A state report without its module flag names nothing: the log says so."""
+    with caplog.at_level(logging.WARNING, logger=HUB_LOGGER):
+        fake_serial.feed(fm.STATE_INVALID_MODULE)
+        await settle()
+    warnings = invalid_warnings(caplog)
+    assert len(warnings) == 1
+    assert warnings[0].endswith("unreadable fields")
 
 
 async def test_invalid_state_report_is_named_by_its_module_only(
@@ -385,7 +420,7 @@ async def test_invalid_state_report_is_named_by_its_module_only(
     with caplog.at_level(logging.WARNING, logger=HUB_LOGGER):
         fake_serial.feed(fm.STATE_PHANTOM_RELAYS)
         await settle()
-    warnings = warnings_of(caplog)
+    warnings = invalid_warnings(caplog)
     assert len(warnings) == 1
     assert "module 1" in warnings[0]
     assert "output" not in warnings[0]

@@ -53,6 +53,18 @@ class StateFrame:
         return bool(self.relays >> relay & 1)
 
 
+class InvalidReason(StrEnum):
+    """Why a checksummed frame cannot be applied; the value reaches Home Assistant."""
+
+    STATE_MODULE_FLAG = "module byte without its flag in a state report"
+    STATE_FROM_SCENARIO_MODULE = "state report from the scenario module"
+    STATE_PHANTOM_RELAYS = "bits beyond relay 10 in a state report"
+    TARGET_OUT_OF_RANGE = "target module out of range"
+    EMITTER_FLAG = "emitter byte without its flag"
+    EVENT_CODE_BITS = "unknown bits in the event code"
+    BUTTON_OUT_OF_RANGE = "button out of range"
+
+
 @dataclass(frozen=True, slots=True)
 class InvalidFrame:
     """
@@ -68,10 +80,13 @@ class InvalidFrame:
 
     raw: bytes
     """The frame bytes, checksum included."""
-    reason: str
-    """Why the frame cannot be applied, in English, without addresses."""
+    reason: InvalidReason
+    """Why the frame cannot be applied; part of the ``biomatx_invalid_frame`` event."""
     target: int | None = None
-    """0-based module the frame addresses (a state report's own module)."""
+    """
+    0-based module the frame addresses, as carried: a state report's own module
+    (0-7), or the target byte of an event frame, which may be any value up to 255.
+    """
     emitter: int | None = None
     """0-based module an event frame claims to come from."""
     button: int | None = None

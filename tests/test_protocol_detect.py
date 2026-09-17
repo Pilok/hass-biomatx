@@ -85,3 +85,17 @@ def test_protocol_values_are_the_strings_stored_in_config_entries() -> None:
     assert Protocol("master") is Protocol.MASTER
     assert Protocol("legacy") is Protocol.LEGACY
     assert Protocol.MASTER.value == "master"
+
+
+def test_a_checksummed_frame_with_impossible_fields_is_no_proof_of_master() -> None:
+    """The detectors' output-11 frame alone is no verdict; the report after it is."""
+    phantom = bytes.fromhex(fm.PHANTOM_PRESS_M4_OUT11)
+    assert detect(phantom) is not Protocol.MASTER
+    assert detect(phantom + bytes.fromhex(fm.STATE_M1_ALL_OFF)) is Protocol.MASTER
+
+
+def test_legacy_stream_with_an_accidental_checksummed_window_stays_legacy() -> None:
+    """``a5 50 80 50 84 a1`` passes the master checksum by chance: still legacy."""
+    sample = bytes.fromhex("50 a5 50 80 50 84 a1 00")
+    assert MasterCodec().feed(sample) != []  # the trap is real: an InvalidFrame
+    assert detect(sample) is Protocol.LEGACY

@@ -16,6 +16,7 @@ from custom_components.biomatx.protocol.frames import (
     EventFrame,
     Frame,
     InvalidFrame,
+    InvalidReason,
     ParserStats,
     Protocol,
     StateFrame,
@@ -403,6 +404,8 @@ def test_detector_phantom_output_11_frames_keep_their_fields() -> None:
         ),
     ]
     assert codec.stats == ParserStats(invalid_frames=3)
+    assert frames[0].reason is InvalidReason.BUTTON_OUT_OF_RANGE
+    assert str(frames[0].reason) == "button out of range"
 
 
 def test_state_with_unflagged_module_byte_is_invalid() -> None:

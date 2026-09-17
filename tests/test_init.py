@@ -250,3 +250,27 @@ async def test_invalid_state_report_event_carries_no_button_fields(
             "pressed": None,
         }
     ]
+
+
+async def test_unreadable_invalid_frame_event_has_null_fields(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+    master_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """A frame whose module byte is unreadable still reaches automations, all null."""
+    entry = await setup_integration(master_config_entry)
+    events = async_capture_events(hass, EVENT_INVALID_FRAME)
+    fake_serial.feed(fm.STATE_INVALID_MODULE)
+    await hass.async_block_till_done()
+    assert [event.data for event in events] == [
+        {
+            "entry_id": entry.entry_id,
+            "raw": "a5 5a 7f 00 81 01 00 00 00",
+            "reason": "module byte without its flag in a state report",
+            "target_module": None,
+            "emitter_module": None,
+            "output": None,
+            "pressed": None,
+        }
+    ]

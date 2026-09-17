@@ -13,6 +13,7 @@ from .frames import (
     EventFrame,
     Frame,
     InvalidFrame,
+    InvalidReason,
     ParserStats,
     Protocol,
     StateFrame,
@@ -25,6 +26,7 @@ __all__ = [
     "EventFrame",
     "Frame",
     "InvalidFrame",
+    "InvalidReason",
     "LegacyCodec",
     "MasterCodec",
     "ParserStats",
@@ -47,15 +49,20 @@ def codec_for(protocol: Protocol) -> Codec:
 
 def detect(data: bytes) -> Protocol | None:
     """
-    Return the protocol spoken in ``data``, or ``None`` if no frame is valid.
+    Return the protocol spoken in ``data``, or ``None`` when nothing decides it.
 
     The master codec is tried first: its frames carry a checksum, whereas a
     master frame such as ``a5 18 ...`` would pass for a legacy button frame.
-    For the same reason a sample that ends inside a master frame (a read that
-    landed mid-frame) gives no verdict: the caller must wait for more bytes.
+    Only a fully decoded master frame (a state report or an event) is proof:
+    an ``InvalidFrame`` is a checksummed window whose fields the format cannot
+    carry, which a legacy stream produces by chance about once in 256 windows,
+    so it counts for nothing here; a real master bus reports every 3 s and
+    decides by itself. For the same reason a sample that ends inside a master
+    frame (a read that landed mid-frame) gives no verdict: the caller must wait
+    for more bytes.
     """
     master = MasterCodec()
-    if master.feed(data):
+    if any(not isinstance(frame, InvalidFrame) for frame in master.feed(data)):
         return Protocol.MASTER
     if master.in_frame:
         return None

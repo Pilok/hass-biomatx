@@ -35,7 +35,15 @@ import logging
 from operator import xor
 from typing import ClassVar
 
-from .frames import Codec, EventFrame, Frame, InvalidFrame, Protocol, StateFrame
+from .frames import (
+    Codec,
+    EventFrame,
+    Frame,
+    InvalidFrame,
+    InvalidReason,
+    Protocol,
+    StateFrame,
+)
 from .model import BUTTONS_PER_MODULE, MAX_MODULE_ADDRESS, SCENARIO_MODULE_ADDRESS
 
 _LOGGER = logging.getLogger(__name__)
@@ -162,15 +170,13 @@ def _decode_state(frame: bytes) -> StateFrame | InvalidFrame:
     module_byte = frame[3]
     module = module_byte & MODULE_MASK
     if module_byte & ~MODULE_MASK != STATE_MODULE_FLAG:
-        return InvalidFrame(frame, "module byte without its flag in a state report")
+        return InvalidFrame(frame, InvalidReason.STATE_MODULE_FLAG)
     if module == SCENARIO_MODULE_ADDRESS:
         return InvalidFrame(
-            frame, "state report from the scenario module", target=module
+            frame, InvalidReason.STATE_FROM_SCENARIO_MODULE, target=module
         )
     if frame[8] & ~RELAYS_HIGH_MASK:
-        return InvalidFrame(
-            frame, "bits beyond relay 10 in a state report", target=module
-        )
+        return InvalidFrame(frame, InvalidReason.STATE_PHANTOM_RELAYS, target=module)
     return StateFrame(
         module=module,
         relays=frame[7] | frame[8] << 8,
@@ -182,41 +188,36 @@ def _decode_event(frame: bytes) -> EventFrame | InvalidFrame:
     target, emitter_byte, code = frame[2], frame[3], frame[5]
     button = code & BUTTON_MASK
     pressed = bool(code & PRESSED_FLAG)
+    emitter = emitter_byte & MODULE_MASK
     emitter_ok = emitter_byte & ~MODULE_MASK == EVENT_EMITTER_FLAG
-    emitter = emitter_byte & MODULE_MASK if emitter_ok else None
     if target > MAX_MODULE_ADDRESS:
         return InvalidFrame(
             frame,
-            "target module out of range",
+            InvalidReason.TARGET_OUT_OF_RANGE,
             target=target,
-            emitter=emitter,
+            emitter=emitter if emitter_ok else None,
             button=button,
             pressed=pressed,
         )
     if not emitter_ok:
         return InvalidFrame(
             frame,
-            "emitter byte without its flag",
+            InvalidReason.EMITTER_FLAG,
             target=target,
             button=button,
             pressed=pressed,
         )
     if code & ~(PRESSED_FLAG | BUTTON_MASK):
         return InvalidFrame(
-            frame, "unknown bits in the event code", target=target, emitter=emitter
+            frame, InvalidReason.EVENT_CODE_BITS, target=target, emitter=emitter
         )
     if button >= BUTTONS_PER_MODULE:
         return InvalidFrame(
             frame,
-            "button out of range",
+            InvalidReason.BUTTON_OUT_OF_RANGE,
             target=target,
             emitter=emitter,
             button=button,
             pressed=pressed,
         )
-    return EventFrame(
-        target=target,
-        emitter=emitter_byte & MODULE_MASK,
-        button=button,
-        pressed=pressed,
-    )
+    return EventFrame(target=target, emitter=emitter, button=button, pressed=pressed)

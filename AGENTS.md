@@ -78,7 +78,10 @@ mergeable only when all of them are green.
   firmware executes it as a press on relay 1. The codec delivers it as
   `InvalidFrame`, the hub logs it at WARNING once per burst and fires the
   `biomatx_invalid_frame` event through the integration; it never touches an
-  entity.
+  entity. A collision leftover that passes the checksum by chance (about one
+  window in 256) looks the same in the log and in the event; the burst
+  throttle keeps the noise to one WARNING a minute, and `detect()` counts
+  neither as proof of the master protocol.
 - The scenario module has address 7. The "all off" scenario, when configured, is
   the only way to resynchronise: `biomatx.reset` fires it, then re-presses every
   relay Home Assistant believes on.
