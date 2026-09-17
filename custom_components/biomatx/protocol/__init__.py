@@ -57,9 +57,13 @@ def detect(data: bytes) -> Protocol | None:
     an ``InvalidFrame`` is a checksummed window whose fields the format cannot
     carry, which a legacy stream produces by chance about once in 256 windows,
     so it counts for nothing here; a real master bus reports every 3 s and
-    decides by itself. For the same reason a sample that ends inside a master
-    frame (a read that landed mid-frame) gives no verdict: the caller must wait
-    for more bytes.
+    decides by itself. The price, unchanged from the first release: a sample
+    holding only such a frame falls through to the legacy codec, which reads
+    ``a5 e8`` as a legacy press and answers ``legacy``. Returning ``None``
+    instead would stall detection on a legacy bus whose buffer holds one such
+    window. For the same reason a sample that ends inside a master frame (a
+    read that landed mid-frame) gives no verdict: the caller must wait for
+    more bytes.
     """
     master = MasterCodec()
     if any(not isinstance(frame, InvalidFrame) for frame in master.feed(data)):

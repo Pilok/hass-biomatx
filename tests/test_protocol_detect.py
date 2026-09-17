@@ -88,9 +88,14 @@ def test_protocol_values_are_the_strings_stored_in_config_entries() -> None:
 
 
 def test_a_checksummed_frame_with_impossible_fields_is_no_proof_of_master() -> None:
-    """The detectors' output-11 frame alone is no verdict; the report after it is."""
+    """
+    The detectors' output-11 frame alone is no proof of master; the report is.
+
+    Alone it even reads as a legacy press (``a5 e8``): the documented price of
+    ignoring checksummed windows, paid once per 3 s at most on a master bus.
+    """
     phantom = bytes.fromhex(fm.PHANTOM_PRESS_M4_OUT11)
-    assert detect(phantom) is not Protocol.MASTER
+    assert detect(phantom) is Protocol.LEGACY
     assert detect(phantom + bytes.fromhex(fm.STATE_M1_ALL_OFF)) is Protocol.MASTER
 
 
