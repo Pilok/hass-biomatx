@@ -8,6 +8,25 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Frames that pass the checksum but carry fields the format cannot (the
+  detectors' "module 4, output 11" frame, which the master firmware executes
+  as a press on relay 1 of module 4) are no longer dropped in silence. The
+  master codec delivers them as `InvalidFrame`: raw bytes, an `InvalidReason`
+  and the target, emitter, button and pressed fields as carried, `None` when
+  the byte that holds them is unreadable. `stats.invalid_frames` counts them
+  as before and `detect()` still ignores them: only a decoded state report or
+  event proves the master protocol. The frozen legacy codec still drops its
+  own invalid two-byte frames.
+- The hub logs one WARNING per burst of such frames, naming module, output and
+  emitter in 1-based terms, then DEBUG until `invalid_frame_log_interval`
+  (60 s) has passed, the next WARNING counting the skipped ones; a new link
+  starts a new burst. Listeners registered with `add_invalid_frame_listener`
+  receive every frame; no entity is touched and `frames_dropped` counts them.
+- The integration fires the `biomatx_invalid_frame` event on the Home Assistant
+  bus with `entry_id`, `raw` (hex), `reason`, `target_module`, `emitter_module`,
+  `output` (1-based, `null` when unreadable) and `pressed`, so an automation
+  can count or react to them.
+
 - Lights on the master firmware show the **real state** reported by their
   module: no `assumed_state`, no state restored across restarts, `unavailable`
   until the module's first report and whenever it stays silent for 10 s

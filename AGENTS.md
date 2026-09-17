@@ -72,6 +72,16 @@ mergeable only when all of them are green.
 - Relays in timer mode switch off by themselves without any bus frame.
   Collisions between two emitters produce garbage bytes (`switch >= 10`, wrong
   release bytes). Both are normal on this bus: log at DEBUG, never ERROR.
+- A master frame that passes its checksum but carries a field the format cannot
+  (`a5 e8 03 80 84 4a`: module 4, output 11) is not garbage: the detectors emit
+  it as a virtual coordination relay (Enersol, 2026-09-17) and the master
+  firmware executes it as a press on relay 1. The codec delivers it as
+  `InvalidFrame`, the hub logs it at WARNING once per burst and fires the
+  `biomatx_invalid_frame` event through the integration; it never touches an
+  entity. A collision leftover that passes the checksum by chance (about one
+  window in 256) looks the same in the log and in the event; the burst
+  throttle keeps the noise to one WARNING a minute, and `detect()` counts
+  neither as proof of the master protocol.
 - The scenario module has address 7. The "all off" scenario, when configured, is
   the only way to resynchronise: `biomatx.reset` fires it, then re-presses every
   relay Home Assistant believes on.

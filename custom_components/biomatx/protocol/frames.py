@@ -53,7 +53,48 @@ class StateFrame:
         return bool(self.relays >> relay & 1)
 
 
-type Frame = EventFrame | StateFrame
+class InvalidReason(StrEnum):
+    """Why a checksummed frame cannot be applied; the value reaches Home Assistant."""
+
+    STATE_MODULE_FLAG = "module byte without its flag in a state report"
+    STATE_FROM_SCENARIO_MODULE = "state report from the scenario module"
+    STATE_PHANTOM_RELAYS = "bits beyond relay 10 in a state report"
+    TARGET_OUT_OF_RANGE = "target module out of range"
+    EMITTER_FLAG = "emitter byte without its flag"
+    EVENT_CODE_BITS = "unknown bits in the event code"
+    BUTTON_OUT_OF_RANGE = "button out of range"
+
+
+@dataclass(frozen=True, slots=True)
+class InvalidFrame:
+    """
+    A complete frame that passed its checksum but carries fields the format cannot.
+
+    Not garbage: on the master firmware the detectors emit a constant frame
+    aimed at "module 4, output 11" (a virtual relay they use to coordinate),
+    which the modules execute as a press on relay 1. Such frames are delivered
+    so the hub can warn, count and expose them; they never touch an entity.
+    The optional fields are the values as carried, 0-based, ``None`` when the
+    byte that holds them is itself unreadable.
+    """
+
+    raw: bytes
+    """The frame bytes, checksum included."""
+    reason: InvalidReason
+    """Why the frame cannot be applied; part of the ``biomatx_invalid_frame`` event."""
+    target: int | None = None
+    """
+    0-based module the frame addresses, as carried: a state report's own module
+    (0-7), or the target byte of an event frame, which may be any value up to 255.
+    """
+    emitter: int | None = None
+    """0-based module an event frame claims to come from."""
+    button: int | None = None
+    """0-based button index as carried; may exceed the module's buttons."""
+    pressed: bool | None = None
+
+
+type Frame = EventFrame | StateFrame | InvalidFrame
 
 
 @dataclass(slots=True)
@@ -67,7 +108,8 @@ class ParserStats:
     checksum_errors: int = 0
     """Complete frames whose checksum did not match (collisions, lost bytes)."""
     invalid_frames: int = 0
-    """Well-formed frames whose fields the format cannot carry (button 15...)."""
+    """Well-formed frames whose fields the format cannot carry (delivered as
+    ``InvalidFrame`` by the master codec, dropped by the frozen legacy codec)."""
     unknown_types: int = 0
     """Frames whose type byte the codec does not know."""
     resyncs: int = 0

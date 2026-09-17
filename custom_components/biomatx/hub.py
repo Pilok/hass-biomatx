@@ -40,6 +40,7 @@ from .protocol import (
     Codec,
     EventFrame,
     Frame,
+    InvalidFrame,
     ParserStats,
     Protocol,
     StateFrame,
@@ -76,6 +77,14 @@ Measured on 2026-09-14: three commands confirmed 2 to 3 s after the press.
 """
 MODULE_TIMEOUT = 10.0
 """Seconds without a state report before a master module is unavailable."""
+INVALID_FRAME_LOG_INTERVAL = 60.0
+"""
+Seconds between two WARNING lines about frames the format cannot carry.
+
+The first such frame of a burst is a WARNING; the following ones are DEBUG
+until the interval has passed, and the next WARNING says how many were skipped.
+Default of the constructor's ``invalid_frame_log_interval``.
+"""
 CLOSE_TIMEOUT = 2
 """Seconds to wait for the reader task and the transport to finish closing."""
 READ_CHUNK = 64
@@ -98,6 +107,7 @@ type DeviceKey = tuple[DeviceKind, int, int]
 type Listener = Callable[[], None]
 type LinkListener = Callable[[bool], None]
 type ProtocolListener = Callable[[Protocol], None]
+type InvalidFrameListener = Callable[[InvalidFrame], None]
 type Confirmation = Callable[[StateFrame], bool]
 
 
@@ -152,6 +162,7 @@ class BiomatxHub:
         reconnect_delays: Sequence[float] | None = None,
         confirm_timeout: float | None = None,
         module_timeout: float | None = None,
+        invalid_frame_log_interval: float | None = None,
     ) -> None:
         """
         Model ``module_count`` modules plus the scenario module.
@@ -177,6 +188,11 @@ class BiomatxHub:
         self._module_timeout = (
             MODULE_TIMEOUT if module_timeout is None else module_timeout
         )
+        self._invalid_frame_log_interval = (
+            INVALID_FRAME_LOG_INTERVAL
+            if invalid_frame_log_interval is None
+            else invalid_frame_log_interval
+        )
         self._codec: Codec | None = None if protocol is None else codec_for(protocol)
         self._detect_buffer = bytearray()
         self._installation = Installation(module_count)
@@ -190,6 +206,9 @@ class BiomatxHub:
         self._listeners: dict[DeviceKey, list[Listener]] = {}
         self._link_listeners: list[LinkListener] = []
         self._protocol_listeners: list[ProtocolListener] = []
+        self._invalid_listeners: list[InvalidFrameListener] = []
+        self._last_invalid_warning: float | None = None
+        self._invalid_since_warning = 0
         self._frames_received = 0
         self._frames_rejected = 0
         self._bytes_discarded = 0
@@ -230,7 +249,12 @@ class BiomatxHub:
 
     @property
     def frames_dropped(self) -> int:
-        """Return the number of complete frames rejected since start."""
+        """
+        Return the number of complete frames never applied to an entity since start.
+
+        Reports and events of unconfigured modules, and the checksummed frames the
+        format cannot carry (delivered to the invalid-frame listeners instead).
+        """
         return self._frames_rejected + self.stats.invalid_frames
 
     @property
@@ -317,6 +341,17 @@ class BiomatxHub:
 
         return _unsubscribe
 
+    def add_invalid_frame_listener(
+        self, listener: InvalidFrameListener
+    ) -> Callable[[], None]:
+        """Call ``listener(frame)`` for each checksummed frame the format cannot use."""
+        self._invalid_listeners.append(listener)
+
+        def _unsubscribe() -> None:
+            self._invalid_listeners.remove(listener)
+
+        return _unsubscribe
+
     def _notify(self, key: DeviceKey) -> None:
         for listener in list(self._listeners.get(key, ())):
             try:
@@ -373,6 +408,9 @@ class BiomatxHub:
         if self._codec is not None:
             self._codec.reset()
         self._detect_buffer.clear()
+        # A new link is a new context: its first invalid frame deserves a WARNING.
+        self._last_invalid_warning = None
+        self._invalid_since_warning = 0
         self._set_connected(connected=True)
 
     async def async_run(self) -> None:
@@ -525,8 +563,64 @@ class BiomatxHub:
     def _handle_frame(self, frame: Frame) -> None:
         if isinstance(frame, StateFrame):
             self._handle_state(frame)
-        else:
+        elif isinstance(frame, EventFrame):
             self._handle_event(frame)
+        else:
+            self._handle_invalid(frame)
+
+    def _handle_invalid(self, frame: InvalidFrame) -> None:
+        """
+        Report a checksummed frame the format cannot carry; touch no entity.
+
+        The detectors emit one on purpose ("module 4, output 11", a virtual
+        coordination relay according to Enersol) and the master firmware acts
+        on it as a press on relay 1, so the frame is worth a WARNING, once per
+        burst, and a notification to the integration. The codec already
+        counted it in ``stats.invalid_frames``.
+        """
+        described = (
+            ", ".join(
+                part
+                for part in (
+                    None if frame.target is None else f"module {frame.target + 1}",
+                    None if frame.button is None else f"output {frame.button + 1}",
+                    None
+                    if frame.pressed is None
+                    else ("pressed" if frame.pressed else "released"),
+                    None
+                    if frame.emitter is None
+                    else f"emitted by module {frame.emitter + 1}",
+                )
+                if part is not None
+            )
+            or "unreadable fields"
+        )
+        now = time.monotonic()
+        last = self._last_invalid_warning
+        if last is None or now - last >= self._invalid_frame_log_interval:
+            skipped = self._invalid_since_warning
+            _LOGGER.warning(
+                "bus frame %s the format cannot carry (%s): %s%s",
+                frame.raw.hex(" "),
+                frame.reason,
+                described,
+                f", {skipped} more since the last warning" if skipped else "",
+            )
+            self._last_invalid_warning = now
+            self._invalid_since_warning = 0
+        else:
+            self._invalid_since_warning += 1
+            _LOGGER.debug(
+                "bus frame %s the format cannot carry (%s): %s",
+                frame.raw.hex(" "),
+                frame.reason,
+                described,
+            )
+        for listener in list(self._invalid_listeners):
+            try:
+                listener(frame)
+            except Exception:
+                _LOGGER.exception("invalid frame listener failed")
 
     def _handle_event(self, frame: EventFrame) -> None:
         if not (
