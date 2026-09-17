@@ -21,7 +21,11 @@ with ``code`` = ``0x40 | button`` when pressed, ``button`` when released.
 The parser is a state machine fed one byte at a time, so the way the serial
 layer splits its reads is irrelevant. A frame that fails its checksum or has
 an unknown type is dropped and the bytes after its start byte are scanned
-again for the next ``a5``: at most one frame is lost per corrupted byte.
+again for the next ``a5``: at most one frame is lost per corrupted byte. A
+frame that passes its checksum but carries a field the format cannot (button
+index 10 or more, module 8...) is delivered as an ``InvalidFrame``: the
+detectors emit one such frame on purpose (``a5 e8 03 80 84 4a``, module 4,
+output 11) and the hub must be able to report it.
 """
 
 from __future__ import annotations
@@ -31,7 +35,7 @@ import logging
 from operator import xor
 from typing import ClassVar
 
-from .frames import Codec, EventFrame, Frame, Protocol, StateFrame
+from .frames import Codec, EventFrame, Frame, InvalidFrame, Protocol, StateFrame
 from .model import BUTTONS_PER_MODULE, MAX_MODULE_ADDRESS, SCENARIO_MODULE_ADDRESS
 
 _LOGGER = logging.getLogger(__name__)
@@ -116,12 +120,16 @@ class MasterCodec(Codec):
             if frame[TYPE_INDEX] == TYPE_STATE
             else _decode_event(frame)
         )
-        if decoded is None:
+        if isinstance(decoded, InvalidFrame):
             self._stats.invalid_frames += 1
-            _LOGGER.debug("frame %s has fields the format cannot carry", frame.hex(" "))
+            _LOGGER.debug(
+                "frame %s has fields the format cannot carry: %s",
+                frame.hex(" "),
+                decoded.reason,
+            )
         else:
             self._stats.frames += 1
-            frames.append(decoded)
+        frames.append(decoded)
 
     def _resync(self, frames: list[Frame]) -> None:
         """Drop the start byte and scan the rest of the buffer for the next frame."""
@@ -150,15 +158,19 @@ class MasterCodec(Codec):
         )
 
 
-def _decode_state(frame: bytes) -> StateFrame | None:
+def _decode_state(frame: bytes) -> StateFrame | InvalidFrame:
     module_byte = frame[3]
     module = module_byte & MODULE_MASK
-    if (
-        module_byte & ~MODULE_MASK != STATE_MODULE_FLAG
-        or module == SCENARIO_MODULE_ADDRESS
-        or frame[8] & ~RELAYS_HIGH_MASK
-    ):
-        return None
+    if module_byte & ~MODULE_MASK != STATE_MODULE_FLAG:
+        return InvalidFrame(frame, "module byte without its flag in a state report")
+    if module == SCENARIO_MODULE_ADDRESS:
+        return InvalidFrame(
+            frame, "state report from the scenario module", target=module
+        )
+    if frame[8] & ~RELAYS_HIGH_MASK:
+        return InvalidFrame(
+            frame, "bits beyond relay 10 in a state report", target=module
+        )
     return StateFrame(
         module=module,
         relays=frame[7] | frame[8] << 8,
@@ -166,19 +178,45 @@ def _decode_state(frame: bytes) -> StateFrame | None:
     )
 
 
-def _decode_event(frame: bytes) -> EventFrame | None:
+def _decode_event(frame: bytes) -> EventFrame | InvalidFrame:
     target, emitter_byte, code = frame[2], frame[3], frame[5]
     button = code & BUTTON_MASK
-    if (
-        target > MAX_MODULE_ADDRESS
-        or emitter_byte & ~MODULE_MASK != EVENT_EMITTER_FLAG
-        or code & ~(PRESSED_FLAG | BUTTON_MASK)
-        or button >= BUTTONS_PER_MODULE
-    ):
-        return None
+    pressed = bool(code & PRESSED_FLAG)
+    emitter_ok = emitter_byte & ~MODULE_MASK == EVENT_EMITTER_FLAG
+    emitter = emitter_byte & MODULE_MASK if emitter_ok else None
+    if target > MAX_MODULE_ADDRESS:
+        return InvalidFrame(
+            frame,
+            "target module out of range",
+            target=target,
+            emitter=emitter,
+            button=button,
+            pressed=pressed,
+        )
+    if not emitter_ok:
+        return InvalidFrame(
+            frame,
+            "emitter byte without its flag",
+            target=target,
+            button=button,
+            pressed=pressed,
+        )
+    if code & ~(PRESSED_FLAG | BUTTON_MASK):
+        return InvalidFrame(
+            frame, "unknown bits in the event code", target=target, emitter=emitter
+        )
+    if button >= BUTTONS_PER_MODULE:
+        return InvalidFrame(
+            frame,
+            "button out of range",
+            target=target,
+            emitter=emitter,
+            button=button,
+            pressed=pressed,
+        )
     return EventFrame(
         target=target,
         emitter=emitter_byte & MODULE_MASK,
         button=button,
-        pressed=bool(code & PRESSED_FLAG),
+        pressed=pressed,
     )

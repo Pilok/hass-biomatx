@@ -23,11 +23,12 @@ from .const import (
     CONF_PROTOCOL,
     CONF_SERIAL_WAIT,
     DOMAIN,
+    EVENT_INVALID_FRAME,
     MANUFACTURER,
     MODEL_BUS,
 )
 from .hub import BiomatxConnectionError, BiomatxHub
-from .protocol import Protocol
+from .protocol import InvalidFrame, Protocol
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -83,6 +84,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: BiomatxConfigEntry) -> b
         name="BioMatX bus",
     )
     entry.runtime_data = BiomatxData(hub=hub, hub_device_id=hub_device.id)
+
+    @callback
+    def _fire_invalid_frame(frame: InvalidFrame) -> None:
+        """Expose a frame the format cannot carry to automations, 1-based."""
+        hass.bus.async_fire(
+            EVENT_INVALID_FRAME,
+            {
+                "entry_id": entry.entry_id,
+                "raw": frame.raw.hex(" "),
+                "reason": frame.reason,
+                "target_module": _one_based(frame.target),
+                "emitter_module": _one_based(frame.emitter),
+                "output": _one_based(frame.button),
+                "pressed": frame.pressed,
+            },
+        )
+
+    entry.async_on_unload(hub.add_invalid_frame_listener(_fire_invalid_frame))
     if stored_protocol is None:
 
         @callback
@@ -100,6 +119,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: BiomatxConfigEntry) -> b
         hass, hub.async_run(), name=f"{DOMAIN} reader {entry.entry_id}"
     )
     return True
+
+
+def _one_based(address: int | None) -> int | None:
+    """Turn a 0-based bus address into the number printed on the front panels."""
+    return None if address is None else address + 1
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: BiomatxConfigEntry) -> bool:

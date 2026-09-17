@@ -14,6 +14,8 @@ import pytest
 
 from custom_components.biomatx.protocol.frames import (
     EventFrame,
+    Frame,
+    InvalidFrame,
     ParserStats,
     Protocol,
     StateFrame,
@@ -26,7 +28,7 @@ from custom_components.biomatx.protocol.master import (
 from . import frames_master as fm
 
 
-def feed(codec: MasterCodec, *hex_frames: str) -> list[EventFrame | StateFrame]:
+def feed(codec: MasterCodec, *hex_frames: str) -> list[Frame]:
     """Feed hex strings to the codec in one read and return the decoded frames."""
     return codec.feed(bytes.fromhex(" ".join(hex_frames)))
 
@@ -128,10 +130,16 @@ def test_state_frame_whose_checksum_byte_is_a5_is_decoded_whole() -> None:
     assert codec.stats == ParserStats(frames=2)
 
 
-def test_state_with_bits_beyond_relay_10_is_invalid() -> None:
-    """Only bits 0 and 1 of the last byte exist; a phantom bit is a corrupted frame."""
+def test_state_with_bits_beyond_relay_10_is_delivered_as_invalid() -> None:
+    """Only bits 0 and 1 of the last byte exist; the frame is flagged, never applied."""
     codec = MasterCodec()
-    assert feed(codec, fm.STATE_PHANTOM_RELAYS) == []
+    assert feed(codec, fm.STATE_PHANTOM_RELAYS) == [
+        InvalidFrame(
+            raw=bytes.fromhex(fm.STATE_PHANTOM_RELAYS),
+            reason="bits beyond relay 10 in a state report",
+            target=0,
+        )
+    ]
     assert codec.stats.invalid_frames == 1
     assert codec.stats.frames == 0
 
@@ -139,7 +147,13 @@ def test_state_with_bits_beyond_relay_10_is_invalid() -> None:
 def test_state_report_from_the_scenario_module_is_invalid() -> None:
     """The scenario module is virtual and never reports state."""
     codec = MasterCodec()
-    assert feed(codec, fm.STATE_SCENARIO_MODULE) == []
+    assert feed(codec, fm.STATE_SCENARIO_MODULE) == [
+        InvalidFrame(
+            raw=bytes.fromhex(fm.STATE_SCENARIO_MODULE),
+            reason="state report from the scenario module",
+            target=7,
+        )
+    ]
     assert codec.stats.invalid_frames == 1
 
 
@@ -334,35 +348,92 @@ def test_bytes_outside_a_frame_are_counted_as_noise() -> None:
     assert codec.stats.checksum_errors == 0
 
 
-def test_event_with_impossible_button_is_invalid_not_delivered() -> None:
-    """Valid checksum but button index 15: the format cannot mean anything."""
+def test_event_with_impossible_button_is_delivered_as_invalid_frame() -> None:
+    """Valid checksum but button index 15: flagged with its fields, not an event."""
     codec = MasterCodec()
     frames = feed(codec, fm.EVENT_INVALID_BUTTON, fm.PRESS_M1_R1)
-    assert frames == [EventFrame(target=0, emitter=0, button=0, pressed=True)]
+    assert frames == [
+        InvalidFrame(
+            raw=bytes.fromhex(fm.EVENT_INVALID_BUTTON),
+            reason="button out of range",
+            target=0,
+            emitter=0,
+            button=15,
+            pressed=True,
+        ),
+        EventFrame(target=0, emitter=0, button=0, pressed=True),
+    ]
     assert codec.stats.invalid_frames == 1
     assert codec.stats.frames == 1
 
 
-def test_state_with_unflagged_module_byte_is_invalid() -> None:
-    """The module byte always carries ``0x40``; anything else is not a state."""
+def test_detector_phantom_output_11_frames_keep_their_fields() -> None:
+    """The detectors' frame names module 4, output 11 and the emitting module."""
     codec = MasterCodec()
-    assert feed(codec, fm.STATE_INVALID_MODULE) == []
+    frames = feed(
+        codec,
+        fm.PHANTOM_PRESS_M4_OUT11,
+        fm.PHANTOM_RELEASE_M4_OUT11,
+        fm.PHANTOM_PRESS_M4_OUT11_FROM_M2,
+    )
+    assert frames == [
+        InvalidFrame(
+            raw=bytes.fromhex(fm.PHANTOM_PRESS_M4_OUT11),
+            reason="button out of range",
+            target=3,
+            emitter=0,
+            button=10,
+            pressed=True,
+        ),
+        InvalidFrame(
+            raw=bytes.fromhex(fm.PHANTOM_RELEASE_M4_OUT11),
+            reason="button out of range",
+            target=3,
+            emitter=0,
+            button=10,
+            pressed=False,
+        ),
+        InvalidFrame(
+            raw=bytes.fromhex(fm.PHANTOM_PRESS_M4_OUT11_FROM_M2),
+            reason="button out of range",
+            target=3,
+            emitter=1,
+            button=10,
+            pressed=True,
+        ),
+    ]
+    assert codec.stats == ParserStats(invalid_frames=3)
+
+
+def test_state_with_unflagged_module_byte_is_invalid() -> None:
+    """The module byte always carries ``0x40``; without it no module is readable."""
+    codec = MasterCodec()
+    assert feed(codec, fm.STATE_INVALID_MODULE) == [
+        InvalidFrame(
+            raw=bytes.fromhex(fm.STATE_INVALID_MODULE),
+            reason="module byte without its flag in a state report",
+        )
+    ]
     assert codec.stats.invalid_frames == 1
 
 
 @pytest.mark.parametrize(
-    "hex_frame",
+    ("hex_frame", "reason"),
     [
-        "a5 e9 08 80 84 40",  # target 8 does not exist
-        "a5 65 00 04 84 40",  # emitter byte without the 0x80 flag
-        "a5 21 00 80 84 80",  # code with a bit outside pressed/button
+        ("a5 e9 08 80 84 40", "target module out of range"),
+        ("a5 65 00 04 84 40", "emitter byte without its flag"),
+        ("a5 21 00 80 84 80", "unknown bits in the event code"),
     ],
 )
-def test_malformed_event_fields_are_invalid(hex_frame: str) -> None:
+def test_malformed_event_fields_are_invalid(hex_frame: str, reason: str) -> None:
     """Every fixed bit of an event frame is checked, not only the checksum."""
     codec = MasterCodec()
     assert xor_checksum(bytes.fromhex(hex_frame)) == 0
-    assert feed(codec, hex_frame) == []
+    frames = feed(codec, hex_frame)
+    assert len(frames) == 1
+    assert isinstance(frames[0], InvalidFrame)
+    assert frames[0].raw == bytes.fromhex(hex_frame)
+    assert frames[0].reason == reason
     assert codec.stats.invalid_frames == 1
 
 

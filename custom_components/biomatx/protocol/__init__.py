@@ -8,7 +8,15 @@ A bus runs one of them; ``detect`` tells which from a sample of its traffic.
 
 from __future__ import annotations
 
-from .frames import Codec, EventFrame, Frame, ParserStats, Protocol, StateFrame
+from .frames import (
+    Codec,
+    EventFrame,
+    Frame,
+    InvalidFrame,
+    ParserStats,
+    Protocol,
+    StateFrame,
+)
 from .legacy import LegacyCodec
 from .master import MasterCodec
 
@@ -16,6 +24,7 @@ __all__ = [
     "Codec",
     "EventFrame",
     "Frame",
+    "InvalidFrame",
     "LegacyCodec",
     "MasterCodec",
     "ParserStats",

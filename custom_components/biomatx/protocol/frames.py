@@ -53,7 +53,33 @@ class StateFrame:
         return bool(self.relays >> relay & 1)
 
 
-type Frame = EventFrame | StateFrame
+@dataclass(frozen=True, slots=True)
+class InvalidFrame:
+    """
+    A complete frame that passed its checksum but carries fields the format cannot.
+
+    Not garbage: on the master firmware the detectors emit a constant frame
+    aimed at "module 4, output 11" (a virtual relay they use to coordinate),
+    which the modules execute as a press on relay 1. Such frames are delivered
+    so the hub can warn, count and expose them; they never touch an entity.
+    The optional fields are the values as carried, 0-based, ``None`` when the
+    byte that holds them is itself unreadable.
+    """
+
+    raw: bytes
+    """The frame bytes, checksum included."""
+    reason: str
+    """Why the frame cannot be applied, in English, without addresses."""
+    target: int | None = None
+    """0-based module the frame addresses (a state report's own module)."""
+    emitter: int | None = None
+    """0-based module an event frame claims to come from."""
+    button: int | None = None
+    """0-based button index as carried; may exceed the module's buttons."""
+    pressed: bool | None = None
+
+
+type Frame = EventFrame | StateFrame | InvalidFrame
 
 
 @dataclass(slots=True)
@@ -67,7 +93,8 @@ class ParserStats:
     checksum_errors: int = 0
     """Complete frames whose checksum did not match (collisions, lost bytes)."""
     invalid_frames: int = 0
-    """Well-formed frames whose fields the format cannot carry (button 15...)."""
+    """Well-formed frames whose fields the format cannot carry (delivered as
+    ``InvalidFrame`` by the master codec, dropped by the frozen legacy codec)."""
     unknown_types: int = 0
     """Frames whose type byte the codec does not know."""
     resyncs: int = 0

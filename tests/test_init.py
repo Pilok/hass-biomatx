@@ -7,10 +7,18 @@ from unittest.mock import patch
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.helpers import device_registry as dr, entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_capture_events,
+)
 
-from custom_components.biomatx.const import CONF_MODULE_COUNT, DOMAIN
+from custom_components.biomatx.const import (
+    CONF_MODULE_COUNT,
+    DOMAIN,
+    EVENT_INVALID_FRAME,
+)
 
+from . import frames_master as fm
 from .conftest import MODULE_COUNT, URL
 
 if TYPE_CHECKING:
@@ -194,3 +202,51 @@ async def test_migrate_v1_renames_legacy_unique_ids_and_removes_relay_devices(
     assert hass.states.get("light.1_7") is not None
     assert hass.states.get("light.biomatx_module_2_relay_8") is None
     assert entity_registry.async_get("light.other").unique_id == "already-migrated"
+
+
+async def test_invalid_frame_fires_a_bus_event_in_1_based_terms(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+    master_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """The detectors' phantom frame becomes an automation trigger; a press does not."""
+    entry = await setup_integration(master_config_entry)
+    events = async_capture_events(hass, EVENT_INVALID_FRAME)
+    fake_serial.feed(fm.PHANTOM_PRESS_M4_OUT11 + fm.PRESS_M1_R1)
+    await hass.async_block_till_done()
+    assert [event.data for event in events] == [
+        {
+            "entry_id": entry.entry_id,
+            "raw": "a5 e8 03 80 84 4a",
+            "reason": "button out of range",
+            "target_module": 4,
+            "emitter_module": 1,
+            "output": 11,
+            "pressed": True,
+        }
+    ]
+
+
+async def test_invalid_state_report_event_carries_no_button_fields(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+    master_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """A flagged state report names its module; the button fields stay null."""
+    entry = await setup_integration(master_config_entry)
+    events = async_capture_events(hass, EVENT_INVALID_FRAME)
+    fake_serial.feed(fm.STATE_PHANTOM_RELAYS)
+    await hass.async_block_till_done()
+    assert [event.data for event in events] == [
+        {
+            "entry_id": entry.entry_id,
+            "raw": "a5 e5 7f 40 81 01 00 00 ff",
+            "reason": "bits beyond relay 10 in a state report",
+            "target_module": 1,
+            "emitter_module": None,
+            "output": None,
+            "pressed": None,
+        }
+    ]

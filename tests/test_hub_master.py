@@ -10,10 +10,12 @@ unavailable. Frames come from the 2026-09-14 captures (``frames_master.py``).
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING
 
 import pytest
 
+from custom_components.biomatx import hub as hub_module
 from custom_components.biomatx.hub import (
     BiomatxCommandError,
     BiomatxHub,
@@ -22,7 +24,7 @@ from custom_components.biomatx.hub import (
     BiomatxNotSupportedError,
     BiomatxProtocolUnknownError,
 )
-from custom_components.biomatx.protocol import ParserStats, Protocol
+from custom_components.biomatx.protocol import InvalidFrame, ParserStats, Protocol
 from custom_components.biomatx.protocol.master import MasterCodec
 
 from . import frames as legacy, frames_master as fm
@@ -105,6 +107,23 @@ def command(
     return codec.encode_button(target, button, pressed=pressed, emitter=emitter).hex(
         " "
     )
+
+
+HUB_LOGGER = "custom_components.biomatx.hub"
+
+
+def hub_messages(caplog: pytest.LogCaptureFixture, level: int) -> list[str]:
+    """Return the hub's messages captured so far at exactly ``level``."""
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == HUB_LOGGER and record.levelno == level
+    ]
+
+
+def warnings_of(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Return the hub's WARNING messages captured so far."""
+    return hub_messages(caplog, logging.WARNING)
 
 
 # --- state reports -----------------------------------------------------------------
@@ -276,6 +295,126 @@ async def test_reconnection_drops_a_half_received_frame(
     await settle()
     assert running.stats.checksum_errors == 0
     assert running.module_available(1) is True
+
+
+# --- invalid frames ----------------------------------------------------------------
+
+
+async def test_phantom_frame_reaches_listeners_and_touches_no_entity(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """The detectors' output-11 frame is handed to the integration, never applied."""
+    seen: list[InvalidFrame] = []
+    running.add_invalid_frame_listener(seen.append)
+    events: list[str] = []
+    running.add_listener(("relay", 3, 0), recorder(events, "relay"))
+    running.add_listener(("switch", 3, 0), recorder(events, "switch"))
+    fake_serial.feed(fm.PHANTOM_PRESS_M4_OUT11 + fm.PHANTOM_RELEASE_M4_OUT11)
+    await settle()
+    assert seen == [
+        InvalidFrame(
+            raw=bytes.fromhex(fm.PHANTOM_PRESS_M4_OUT11),
+            reason="button out of range",
+            target=3,
+            emitter=0,
+            button=10,
+            pressed=True,
+        ),
+        InvalidFrame(
+            raw=bytes.fromhex(fm.PHANTOM_RELEASE_M4_OUT11),
+            reason="button out of range",
+            target=3,
+            emitter=0,
+            button=10,
+            pressed=False,
+        ),
+    ]
+    assert events == []
+    assert running.switch(3, 0).events == 0
+    assert running.frames_dropped == 2
+    assert running.frames_received == 0
+
+
+async def test_invalid_frame_is_a_warning_once_per_burst_then_debug(
+    running: BiomatxHub, fake_serial: FakeSerialLink, caplog: pytest.LogCaptureFixture
+) -> None:
+    """One WARNING names the frame in 1-based terms; the rest of the burst is DEBUG."""
+    with caplog.at_level(logging.DEBUG, logger=HUB_LOGGER):
+        fake_serial.feed(fm.PHANTOM_PRESS_M4_OUT11 + fm.PHANTOM_RELEASE_M4_OUT11)
+        await settle()
+    warnings = warnings_of(caplog)
+    assert len(warnings) == 1
+    assert "a5 e8 03 80 84 4a" in warnings[0]
+    assert "module 4" in warnings[0]
+    assert "output 11" in warnings[0]
+    assert "emitted by module 1" in warnings[0]
+    assert "button out of range" in warnings[0]
+    debugs = [
+        message
+        for message in hub_messages(caplog, logging.DEBUG)
+        if "a5 a8 03 80 84 0a" in message
+    ]
+    assert len(debugs) == 1
+    assert "output 11 released" in debugs[0]
+
+
+async def test_invalid_frame_warning_returns_after_the_quiet_interval(
+    running: BiomatxHub,
+    fake_serial: FakeSerialLink,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once the interval has passed, the next frame warns again and counts the rest."""
+    with caplog.at_level(logging.WARNING, logger=HUB_LOGGER):
+        fake_serial.feed(fm.PHANTOM_PRESS_M4_OUT11 + fm.PHANTOM_RELEASE_M4_OUT11)
+        await settle()
+        assert len(warnings_of(caplog)) == 1
+        monkeypatch.setattr(hub_module, "INVALID_FRAME_LOG_INTERVAL", 0)
+        fake_serial.feed(fm.PHANTOM_PRESS_M4_OUT11_FROM_M2)
+        await settle()
+    warnings = warnings_of(caplog)
+    assert len(warnings) == 2
+    assert "a5 e9 03 81 84 4a" in warnings[1]
+    assert "1 more" in warnings[1]
+
+
+async def test_invalid_state_report_is_named_by_its_module_only(
+    running: BiomatxHub, fake_serial: FakeSerialLink, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A state report with phantom bits has no button: the warning says so plainly."""
+    with caplog.at_level(logging.WARNING, logger=HUB_LOGGER):
+        fake_serial.feed(fm.STATE_PHANTOM_RELAYS)
+        await settle()
+    warnings = warnings_of(caplog)
+    assert len(warnings) == 1
+    assert "module 1" in warnings[0]
+    assert "output" not in warnings[0]
+    assert "bits beyond relay 10" in warnings[0]
+    assert running.module_available(0) is False
+
+
+async def test_failing_invalid_frame_listener_is_logged_and_others_still_run(
+    running: BiomatxHub, fake_serial: FakeSerialLink, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A broken listener never stops the others, nor the reader."""
+    seen: list[InvalidFrame] = []
+
+    def _boom(_frame: InvalidFrame) -> None:
+        msg = "boom"
+        raise RuntimeError(msg)
+
+    unsubscribe = running.add_invalid_frame_listener(_boom)
+    running.add_invalid_frame_listener(seen.append)
+    with caplog.at_level(logging.ERROR, logger=HUB_LOGGER):
+        fake_serial.feed(fm.PHANTOM_PRESS_M4_OUT11)
+        await settle()
+    assert len(seen) == 1
+    assert "invalid frame listener failed" in caplog.text
+    unsubscribe()
+    fake_serial.feed(fm.PHANTOM_RELEASE_M4_OUT11)
+    await settle()
+    assert len(seen) == 2
+    assert running.connected is True
 
 
 # --- events --------------------------------------------------------------------------

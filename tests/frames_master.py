@@ -56,6 +56,13 @@ ORPHAN_START = "a5"
 TRUNCATED_STATE = "a5 1b 7f 41 81 01 00 00"  # last byte lost on the wire
 # Valid checksum, button index 15: a collision leftover that the format cannot carry.
 EVENT_INVALID_BUTTON = "a5 ee 00 80 84 4f"
+# Captured on the owner's four-module bus on 2026-09-15 and 2026-09-16, each within
+# 90 ms of a detector press: valid checksum, target module 4 (index 3), "output 11"
+# (button index 10) which no module has. Enersol: a virtual relay the detectors use
+# to coordinate; the master firmware acts on it as a press on relay 1 of module 4.
+PHANTOM_PRESS_M4_OUT11 = "a5 e8 03 80 84 4a"  # emitted by module 1
+PHANTOM_RELEASE_M4_OUT11 = "a5 a8 03 80 84 0a"
+PHANTOM_PRESS_M4_OUT11_FROM_M2 = "a5 e9 03 81 84 4a"  # emitted by module 2
 # Valid checksum, module field without the 0x40 flag.
 STATE_INVALID_MODULE = "a5 5a 7f 00 81 01 00 00 00"
 # A state frame whose relay byte happens to be a5 (relays 1, 3, 6, 8 on).

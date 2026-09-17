@@ -6,6 +6,14 @@ from .protocol.model import BUTTONS_PER_MODULE
 
 DOMAIN: Final = "biomatx"
 
+EVENT_INVALID_FRAME: Final = f"{DOMAIN}_invalid_frame"
+"""
+Fired on the Home Assistant event bus for every checksummed frame the format
+cannot carry (the detectors' "module 4, output 11" frame). Data: ``entry_id``,
+``raw`` (hex), ``reason``, ``target_module``, ``emitter_module``, ``output``
+(1-based, ``None`` when unreadable), ``pressed``.
+"""
+
 CONF_MODULE_COUNT: Final = "module_count"
 CONF_ALL_OFF_ADDRESS: Final = "all_off_address"
 """Stored 0-based address of the all-off scenario button, absent when unset."""
