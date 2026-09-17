@@ -6,6 +6,18 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.2] - 2026-09-17
+
+First pre-release for the **master firmware**, which ships alongside the frozen
+legacy path: codecs for both firmwares with detection on the bus, relay state
+read from the modules' reports, `event` entities for every button and
+scenario, commands confirmed by the report that follows them, and the
+detectors' "module 4, output 11" frame made visible. This code has been
+running on the owner's four-module bus since 2026-09-14 (verification stages
+1 to 4 and 9 of the project plan). Installable through HACS as a custom
+repository. Versioning follows the roadmap in `AGENTS.md`: the `1.0.0`
+pre-releases replace the 2.0 line announced with beta.1.
+
 ### Added
 
 - Frames that pass the checksum but carry fields the format cannot (the
@@ -187,5 +199,6 @@ onwards; the 2.0 line announced here was never opened. See the roadmap in
   upstream `reload` service is dropped for good (Home Assistant reloads the
   config entry, and the link reconnects by itself).
 
-[Unreleased]: https://github.com/Pilok/hass-biomatx/compare/v1.0.0-beta.1...HEAD
+[Unreleased]: https://github.com/Pilok/hass-biomatx/compare/v1.0.0-beta.2...HEAD
+[1.0.0-beta.2]: https://github.com/Pilok/hass-biomatx/compare/v1.0.0-beta.1...v1.0.0-beta.2
 [1.0.0-beta.1]: https://github.com/Pilok/hass-biomatx/compare/f2ea009...v1.0.0-beta.1
