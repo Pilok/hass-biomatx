@@ -117,7 +117,10 @@ This is the last state of the **legacy protocol** (two-byte frames, inferred
 relay state) validated on hardware: live command test and an observation night
 on a four-module bus on 2026-09-09. Modules reprogrammed with the "master"
 firmware (state reports, XOR checksum) are handled by the 2.0 line; the legacy
-path is frozen and receives fixes only.
+path is frozen and receives fixes only. (Note of 2026-09-17: the master
+firmware ships in the `1.0.0` pre-releases that follow, `1.0.0-beta.2`
+onwards; the 2.0 line announced here was never opened. See the roadmap in
+`AGENTS.md`.)
 
 ### Added
 
