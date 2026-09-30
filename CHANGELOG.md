@@ -52,18 +52,19 @@ the project uses [Semantic Versioning](https://semver.org/).
   and the wiring, how to recognise the firmware from the first frame, the
   installation as a HACS custom repository, the devices and entities, the
   `biomatx_invalid_frame` event, the known limits, troubleshooting and removal.
-  The step-by-step setup is written with the config flow release.
+  The step-by-step setup follows the config flow of the pull request that
+  discovers the modules: the two pages, the 8 second listen, what is stored,
+  reconfiguration and how to correct a wrong firmware.
 - `custom_components/biomatx/quality_scale.yaml`: the status of each of the 20
-  bronze rules of the Integration Quality Scale (11 done, 5 exempt, 4 todo:
-  `brands`, `config-flow`, `config-flow-test-coverage` and
-  `docs-installation-instructions`), with its structure checked by the
+  bronze rules of the Integration Quality Scale (13 done, 5 exempt, 2 todo:
+  `brands` and `config-flow-test-coverage`), with its structure checked by the
   repository metadata tests.
 - `release.yml`: pushing a `v*` tag publishes the GitHub Release with the
   matching `CHANGELOG.md` section as notes, as a pre-release when the tag
   contains `-`. `scripts/release_notes.py` runs first and fails the workflow
-  when `manifest.json` `version` differs from the tag without the `v`, or when
-  the changelog has no section for that version. It can be run by hand before
-  tagging.
+  when `manifest.json` `version` differs from the tag without the `v`, when the
+  tagged commit is not on `origin/main`, or when the changelog has no section for
+  that version. It can be run by hand before tagging.
 
 ### Changed
 
@@ -80,8 +81,10 @@ the project uses [Semantic Versioning](https://semver.org/).
 - Roadmap in `AGENTS.md`, from the owner's decisions of 2026-09-30: the
   `all_off` service is dropped from `1.1.0`, the `switch` to `button` rename
   with a unique_id migration is dropped from "Later", and `1.0.0` also needs a
-  week without a module turning unavailable outside a Home Assistant restart,
-  or with an identified and addressed cause.
+  week with no module unavailable outside a Home Assistant restart, or with the
+  cause of that unavailability identified and treated. `1.1.0` lists the legacy
+  `biomatx.reset` service, and the domain facts say that the hub implements the
+  legacy reset while no service is registered yet.
 
 ### Removed
 

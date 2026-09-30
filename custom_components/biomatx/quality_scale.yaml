@@ -31,23 +31,24 @@ rules:
   config-flow-test-coverage:
     status: todo
     comment: >-
-      config_flow.py is at 100 % statement coverage, the user step recovers
-      from cannot_connect and a second entry for one device is refused. The
-      reconfigure test for cannot_connect stops at the error and does not
-      finish the flow afterwards.
+      Done with #17 (full reconfigure coverage). On main, config_flow.py is at
+      100 % statement coverage and the user step recovers from cannot_connect,
+      but the reconfigure test for cannot_connect stops at the error and does
+      not finish the flow afterwards.
   config-flow:
-    status: todo
+    status: done
     comment: >-
       data_description is set on every field. The module count and the optional
-      all-off scenario are stored in the entry data, not in its options. The
-      entry keys are part of the public API that 1.0.0 fixes, so this has to be
-      decided before then.
+      all-off scenario describe the installation, not a preference, so they stay
+      in the entry data and change through the reconfigure flow, the route Home
+      Assistant recommends for configuration data.
   dependency-transparency:
     status: done
     comment: >-
-      The only requirement, serialx 1.10.0, is licensed Apache-2.0, is on PyPI,
-      is published from a public GitHub Actions workflow with PyPI
-      attestations, and is tagged v1.10.0 in its repository.
+      The only requirement, serialx (>=1.10.0,<2), is licensed Apache-2.0, is on
+      PyPI, and its releases 1.10.0 and 1.11.0 are published from a public
+      GitHub Actions workflow with PyPI attestations and tagged in its
+      repository.
   docs-actions:
     status: exempt
     comment: The integration provides no service actions.
@@ -56,11 +57,10 @@ rules:
     comment: The integration provides no conditions.
   docs-high-level-description: done
   docs-installation-instructions:
-    status: todo
+    status: done
     comment: >-
-      README.md lists the prerequisites and the HACS installation. The
-      step-by-step setup is written after the config flow pull request
-      (1.0.0-beta.3).
+      README.md lists the prerequisites, the HACS installation and the two pages
+      of the setup, reconfiguration included.
   docs-removal-instructions: done
   docs-triggers:
     status: exempt
@@ -73,7 +73,7 @@ rules:
     status: done
     comment: >-
       The user and reconfigure steps open the serial device and show
-      cannot_connect when they cannot. They do not check yet that modules
-      answer on the bus.
+      cannot_connect when they cannot, then listen to the bus for 8 seconds and
+      show the firmware and the modules heard.
   test-before-setup: done
   unique-config-entry: done

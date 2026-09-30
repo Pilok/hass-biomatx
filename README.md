@@ -45,7 +45,7 @@ To recognise yours, read the bytes of the bus at 19200 8N1 with a serial termina
 - **Master:** within three seconds, 9-byte frames starting with `a5`, one per module every 3 s. For example `a5 1a 7f 40 81 01 00 00 00` is the state report of module 1 with every relay off.
 - **Legacy:** nothing until someone presses a button, then 2-byte frames. For example `50 00` is button 1 of module 1 pressed and `50 80` is the same button released.
 
-You do not have to tell the integration: it detects the firmware from the first valid frame it reads. A legacy bus is silent until a button is pressed, so the integration refuses commands until it has read that first frame. In Home Assistant, the lights of a legacy bus have separate on and off buttons, because their state is assumed, while the lights of a master bus show their real state.
+You do not have to tell the integration. The setup listens to the bus for 8 seconds and records the master firmware when it decodes a master frame. In every other case the integration detects the firmware at its first start, from the first valid frame it reads. A legacy bus is silent until a button is pressed, so the integration refuses commands until it has read that first frame. In Home Assistant, the lights of a legacy bus have separate on and off buttons, because their state is assumed, while the lights of a master bus show their real state.
 
 The master firmware is not installed from this repository. Your installer reprograms the modules to obtain it. The integration reads one firmware per bus, so every module of a bus has to run the same one.
 
@@ -67,11 +67,41 @@ Nothing is sent on the bus when Home Assistant starts.
 3. Open **BioMatX** in HACS and download it. Every release before `1.0.0` is a pre-release, and while no stable release exists HACS downloads the default branch, which can be ahead of the last release. To install a release instead, choose it under **Need a different version?** in the download dialog. HACS announces the removal of that selector; when it is gone, call the `update.install` action on the update entity of the repository with the `version` of the release.
 4. Restart Home Assistant.
 
-After the restart, add the integration from **Settings** > **Devices & services** > **Add integration** and search for BioMatX.
-
 HACS only announces updates to pre-releases when the "Pre-release" switch of the repository is on. HACS creates that switch entity for every repository it downloads, and it is disabled by default: enable it under **Settings** > **Devices & services** > **HACS**.
 
-<!-- Setup walkthrough: written after the config flow pull request (1.0.0-beta.3). -->
+## Setup
+
+After the restart, go to **Settings** > **Devices & services** > **Add integration** and search for BioMatX. The setup has two pages.
+
+**Page 1, the serial device.** Enter the path of the adapter, for example `/dev/serial/by-id/usb-...`, or `socket://host:port` for a serial-to-Ethernet gateway. The integration then listens to the bus for 8 seconds, without sending anything, so the page takes that long to answer.
+
+- If the device cannot be opened, the page stays up with "The serial device could not be opened". See [Troubleshooting](#troubleshooting).
+- A device that is already configured, or whose setup is already in progress, is refused before its port is opened.
+
+**Page 2, the modules on the bus.** The page tells what the listen heard:
+
+- **Firmware protocol:** `master` when a master frame was decoded, `-` otherwise. A legacy bus is silent until a button is pressed, so it shows `-` as well.
+- **Modules heard:** the modules that sent a state report, numbered like their front panel, or `-`.
+
+It then asks for two values:
+
+- **Number of modules**, 1 to 7. The page pre-fills the highest module number heard. Correct it if a module stayed silent, and enter it by hand when nothing was heard.
+- **"All off" scenario**, optional, 1 to 10: the number of the scenario programmed on every module to switch all relays off. Leave it empty if there is none.
+
+The integration stores the master firmware in its configuration only when the listen decoded a master frame. It never stores the legacy firmware from the listen, since a single stray frame could make a master bus look like a legacy one. Without a stored firmware, the integration detects it at its first start, from the first valid frame it reads, and stores it then.
+
+### Reconfiguring
+
+Open **Settings** > **Devices & services** > **BioMatX**, then the three-dot menu and **Reconfigure**. The same two pages let you change the serial device, raise the number of modules or change the "all off" scenario.
+
+- If the integration is running and the device is unchanged, the bus is not listened to again, because the reader of the integration holds the port. Page 2 shows the firmware the integration works with, legacy included, and the modules it has heard since its link came up, a module that joined the bus after the setup among them.
+- For the same device, the page never proposes fewer modules than are configured.
+- Submitting without any change does not reload the integration, so the lights stay available. A change reloads it.
+- A new device, or an integration that is not running, is listened to for 8 seconds like a new setup.
+
+### Correcting a wrong firmware
+
+On a master bus, the first bytes read at the first start can be a lone "module 4, output 11" frame, which reads as a legacy press and stores `legacy`. The lights then show their assumed state, with separate on and off buttons, and do not follow the reports of the modules. To correct it, disable the integration entry, reconfigure it, then enable it again: the bus of a disabled entry is listened to, and a master bus is stored as `master`.
 
 ## Entities and devices
 
@@ -137,6 +167,8 @@ The debug lines show every decoded button frame. They count modules and buttons 
 **Setup fails with "The serial device could not be opened", or the integration stays in "Failed setup, will retry".** The log says `Cannot open the BioMatX serial device ...`. Check the path and that the adapter is plugged in. A stable path such as `/dev/serial/by-id/usb-...` survives a change of USB port. On Home Assistant OS and in a container the device has to be visible to Home Assistant. `Serial port ... is already locked by another process` means another program holds the port.
 
 **Nothing decodes, or the frames look broken.** Swap the two bus wires, since a reversed polarity is a known cause. Then check that no other program reads the port.
+
+**Page 2 of the setup shows "-" for the firmware and the modules.** Nothing was decoded during the 8 seconds. On a legacy bus this is normal, since it is silent until a button is pressed: enter the number of modules by hand. On a bus that should be master, swap the two wires, check the path and that no other program reads the port, then start the setup again.
 
 **Every entity is unavailable.** The serial link is down. The log says `link to <device> lost (...), reconnecting`. The integration retries by itself after 1, 2, 5, 10 and 30 seconds, then every 60 seconds. On the master firmware the lights come back as each module sends its next report, within three seconds.
 
