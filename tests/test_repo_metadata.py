@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import re
 
+from packaging.requirements import Requirement
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -66,6 +67,27 @@ def test_manifest_keys_are_sorted_like_hassfest_expects(
     keys = list(manifest)
     assert keys[:2] == ["domain", "name"]
     assert keys[2:] == sorted(keys[2:])
+
+
+def test_serialx_requirement_accepts_the_versions_of_both_cores(
+    manifest: dict[str, object],
+) -> None:
+    """
+    Home Assistant 2026.9 constrains serialx to 1.10.0 and 2026.10 to 1.11.0.
+
+    A pin on either fails on the other core: hassfest runs against the newest one,
+    and the instance of the owner runs the older one.
+    """
+    requirements = manifest["requirements"]
+    assert isinstance(requirements, list)
+    (serialx,) = (
+        requirement
+        for requirement in map(Requirement, requirements)
+        if requirement.name == "serialx"
+    )
+    assert "1.10.0" in serialx.specifier
+    assert "1.11.0" in serialx.specifier
+    assert "2.0.0" not in serialx.specifier
 
 
 def test_manifest_has_no_empty_discovery_keys(manifest: dict[str, object]) -> None:

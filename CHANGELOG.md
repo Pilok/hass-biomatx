@@ -6,6 +6,15 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `manifest.json` requires `serialx>=1.10.0,<2` instead of pinning `1.10.0`.
+  Home Assistant 2026.9 constrains `serialx` to 1.10.0 and 2026.10 to 1.11.0, so
+  a pin on either fails on the other core: hassfest, which runs against the
+  newest core, rejected `1.10.0` from 2026-09-30 on. Nothing changes on Home
+  Assistant 2026.9, which keeps the installed 1.10.0. The test workflow now
+  runs the suite on `serialx` 1.10.0 and on 1.11.0.
+
 ## [1.0.0-beta.2] - 2026-09-17
 
 First pre-release for the **master firmware**, which ships alongside the frozen
