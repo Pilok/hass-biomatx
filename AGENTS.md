@@ -138,9 +138,10 @@ mergeable only when all of them are green.
 
 1. Release PR: turn the `[Unreleased]` entries of `CHANGELOG.md` into a dated
    `## [X.Y.Z] - YYYY-MM-DD` section, update the compare links at the end of the
-   file, and set `manifest.json` `version`. Once it is merged, `python
-   scripts/release_notes.py vX.Y.Z --main-ref origin/main` prints the notes the
-   release will carry and fails on a mismatch: run it before tagging.
+   file, and set `manifest.json` `version`. Once it is merged, from an up-to-date
+   `main` (`git pull`), `python scripts/release_notes.py vX.Y.Z --main-ref
+   origin/main` prints the notes the release will carry and fails on a mismatch:
+   run it before tagging.
 2. Tag `vX.Y.Z` on `main` and push the tag. Do not create the release by hand:
    `release.yml` runs `scripts/release_notes.py`, which fails the workflow
    unless the manifest version equals the tag without the `v`, the tagged commit

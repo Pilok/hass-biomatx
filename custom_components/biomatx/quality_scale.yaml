@@ -4,8 +4,9 @@
 # documentation of this repository holds it. Hassfest validates this file for
 # core integrations only; tests/test_repo_metadata.py checks its structure here.
 # The manifest declares no quality_scale: bronze needs every rule done or exempt.
-# The statuses describe the code and the documentation as they were when this
-# file was written; a change that alters a rule updates it (AGENTS.md).
+# The statuses describe the code and the documentation of main, plus the config
+# flow of #17 where a comment says so; a change that alters a rule updates it
+# (AGENTS.md).
 rules:
   # Bronze
   action-setup:
@@ -31,17 +32,18 @@ rules:
   config-flow-test-coverage:
     status: todo
     comment: >-
-      Done with #17 (full reconfigure coverage). On main, config_flow.py is at
-      100 % statement coverage and the user step recovers from cannot_connect,
-      but the reconfigure test for cannot_connect stops at the error and does
-      not finish the flow afterwards.
+      config_flow.py is at 100 % statement coverage and the user step recovers
+      from cannot_connect, but the reconfigure test for cannot_connect stops at
+      the error and does not finish the flow afterwards. #17 rewrites the flow
+      and its tests and keeps that test as it is: the rule becomes done once a
+      test submits a device that opens after the error and ends the flow.
   config-flow:
     status: done
     comment: >-
-      data_description is set on every field. The module count and the optional
-      all-off scenario describe the installation, not a preference, so they stay
-      in the entry data and change through the reconfigure flow, the route Home
-      Assistant recommends for configuration data.
+      data_description is set on every field. Owner's decision: the module count
+      and the optional all-off scenario describe the installation, not a
+      preference, so they stay in the entry data and change through the
+      reconfigure flow.
   dependency-transparency:
     status: done
     comment: >-
@@ -59,8 +61,8 @@ rules:
   docs-installation-instructions:
     status: done
     comment: >-
-      README.md lists the prerequisites, the HACS installation and the two pages
-      of the setup, reconfiguration included.
+      README.md lists the prerequisites and the HACS installation, and, from
+      #17, the two pages of the setup and the reconfiguration.
   docs-removal-instructions: done
   docs-triggers:
     status: exempt
@@ -72,8 +74,8 @@ rules:
   test-before-configure:
     status: done
     comment: >-
-      The user and reconfigure steps open the serial device and show
-      cannot_connect when they cannot, then listen to the bus for 8 seconds and
-      show the firmware and the modules heard.
+      The user step, and the reconfigure step for a new device, open the serial
+      device and show cannot_connect when they cannot. With #17 they also listen
+      to the bus for 8 seconds and show the firmware and the modules heard.
   test-before-setup: done
   unique-config-entry: done

@@ -52,9 +52,9 @@ the project uses [Semantic Versioning](https://semver.org/).
   and the wiring, how to recognise the firmware from the first frame, the
   installation as a HACS custom repository, the devices and entities, the
   `biomatx_invalid_frame` event, the known limits, troubleshooting and removal.
-  The step-by-step setup follows the config flow of the pull request that
-  discovers the modules: the two pages, the 8 second listen, what is stored,
-  reconfiguration and how to correct a wrong firmware.
+  The step-by-step setup follows the config flow of #17 (bus discovery): the
+  two pages, the 8 second listen, what is stored, reconfiguration and how to
+  correct a wrong firmware.
 - `custom_components/biomatx/quality_scale.yaml`: the status of each of the 20
   bronze rules of the Integration Quality Scale (13 done, 5 exempt, 2 todo:
   `brands` and `config-flow-test-coverage`), with its structure checked by the
@@ -63,8 +63,9 @@ the project uses [Semantic Versioning](https://semver.org/).
   matching `CHANGELOG.md` section as notes, as a pre-release when the tag
   contains `-`. `scripts/release_notes.py` runs first and fails the workflow
   when `manifest.json` `version` differs from the tag without the `v`, when the
-  tagged commit is not on `origin/main`, or when the changelog has no section for
-  that version. It can be run by hand before tagging.
+  tagged commit is not on `origin/main` (`--main-ref origin/main`, which the
+  workflow passes), or when the changelog has no section for that version. It
+  can be run by hand before tagging.
 
 ### Changed
 

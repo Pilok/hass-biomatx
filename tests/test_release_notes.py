@@ -109,6 +109,8 @@ def _git(repo: Path, *args: str) -> None:
             "user.email=test@example.test",
             "-c",
             "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
             *args,
         ],
         check=True,
@@ -241,6 +243,15 @@ def test_unknown_main_ref_is_an_error_not_a_pass(repo: Path) -> None:
     """A workflow that fetched no ``origin/main`` must fail, not release."""
     with pytest.raises(release_notes.ReleaseError, match="cannot compare"):
         release_notes.check_on_main(repo, "origin/main")
+
+
+def test_missing_git_is_an_error_not_a_pass(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A runner without git cannot prove that the tag is on main."""
+    monkeypatch.setattr(release_notes.shutil, "which", lambda _name: None)
+    with pytest.raises(release_notes.ReleaseError, match="git is needed"):
+        release_notes.check_on_main(repo, "main")
 
 
 def test_tag_on_main_passes_the_main_check(release: Release, repo: Path) -> None:

@@ -73,7 +73,7 @@ HACS only announces updates to pre-releases when the "Pre-release" switch of the
 
 After the restart, go to **Settings** > **Devices & services** > **Add integration** and search for BioMatX. The setup has two pages.
 
-**Page 1, the serial device.** Enter the path of the adapter, for example `/dev/serial/by-id/usb-...`, or `socket://host:port` for a serial-to-Ethernet gateway. The integration then listens to the bus for 8 seconds, without sending anything, so the page takes that long to answer.
+**Page 1, the serial device.** Enter the path of the adapter, or `socket://host:port` for a serial-to-Ethernet gateway. Home Assistant recommends the stable `/dev/serial/by-id/...` link over `/dev/ttyUSB0`; `ls /dev/serial/by-id/` on the host lists it. The integration then listens to the bus for 8 seconds, without sending anything, so the page takes that long to answer.
 
 - If the device cannot be opened, the page stays up with "The serial device could not be opened". See [Troubleshooting](#troubleshooting).
 - A device that is already configured, or whose setup is already in progress, is refused before its port is opened.
@@ -85,23 +85,23 @@ After the restart, go to **Settings** > **Devices & services** > **Add integrati
 
 It then asks for two values:
 
-- **Number of modules**, 1 to 7. The page pre-fills the highest module number heard. Correct it if a module stayed silent, and enter it by hand when nothing was heard.
+- **Number of modules**, 1 to 7: the highest module number present on the bus. Modules 1 to that number get their lights and events, so a bus with modules 1, 2 and 5 needs 5. The page pre-fills the highest module number heard. Correct it if a module stayed silent, and enter it by hand when nothing was heard.
 - **"All off" scenario**, optional, 1 to 10: the number of the scenario programmed on every module to switch all relays off. Leave it empty if there is none.
 
 The integration stores the master firmware in its configuration only when the listen decoded a master frame. It never stores the legacy firmware from the listen, since a single stray frame could make a master bus look like a legacy one. Without a stored firmware, the integration detects it at its first start, from the first valid frame it reads, and stores it then.
 
 ### Reconfiguring
 
-Open **Settings** > **Devices & services** > **BioMatX**, then the three-dot menu and **Reconfigure**. The same two pages let you change the serial device, raise the number of modules or change the "all off" scenario.
+Open **Settings** > **Devices & services** > **BioMatX**, then the three-dot menu and **Reconfigure**. The same two pages let you change the serial device, the number of modules or the "all off" scenario.
 
 - If the integration is running and the device is unchanged, the bus is not listened to again, because the reader of the integration holds the port. Page 2 shows the firmware the integration works with, legacy included, and the modules it has heard since its link came up, a module that joined the bus after the setup among them.
 - For the same device, the page never proposes fewer modules than are configured.
 - Submitting without any change does not reload the integration, so the lights stay available. A change reloads it.
-- A new device, or an integration that is not running, is listened to for 8 seconds like a new setup.
+- A new device, or an integration that is not running, is listened to for 8 seconds. On an unchanged device, a silent bus keeps the stored firmware.
 
 ### Correcting a wrong firmware
 
-On a master bus, the first bytes read at the first start can be a lone "module 4, output 11" frame, which reads as a legacy press and stores `legacy`. The lights then show their assumed state, with separate on and off buttons, and do not follow the reports of the modules. To correct it, disable the integration entry, reconfigure it, then enable it again: the bus of a disabled entry is listened to, and a master bus is stored as `master`.
+On a master bus, the first bytes read at the first start can be a lone "module 4, output 11" frame (see [Known limitations](#known-limitations)), which reads as a legacy frame and stores `legacy`. The lights then show their assumed state, with separate on and off buttons, and do not follow the reports of the modules. A running entry keeps the firmware it works with when it is reconfigured, so a review does not correct it, and the menu of a disabled entry offers no reconfiguration. Remove the integration entry and add it again: the new setup listens to the bus and stores `master`. The devices and entities of the removed entry go with it, and the new ones start without the names, areas and customizations of the old ones.
 
 ## Entities and devices
 
