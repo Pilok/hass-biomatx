@@ -16,17 +16,22 @@ jobs:
       - name: Checkout the tagged commit
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          # The whole history, to tell whether the tagged commit is on main.
+          fetch-depth: 0
           persist-credentials: false
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.14"
       # Fails, and so publishes nothing, unless manifest.json declares the tag
-      # without its "v" and CHANGELOG.md has a section for that version.
+      # without its "v", the tagged commit is on main and CHANGELOG.md has a
+      # section for that version.
       - name: Check the tag and extract the release notes
         env:
           TAG: ${{ github.ref_name }}
-        run: python scripts/release_notes.py "$TAG" > "$RUNNER_TEMP/release-notes.md"
+        run: >-
+          python scripts/release_notes.py "$TAG" --main-ref origin/main
+          > "$RUNNER_TEMP/release-notes.md"
       - name: Publish the release
         shell: bash
         env:

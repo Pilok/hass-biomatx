@@ -2,11 +2,12 @@
 Check a release tag and print the CHANGELOG section that becomes its notes.
 
 ``release.yml`` runs this on every ``v*`` tag and publishes nothing when it
-fails: the tag must be ``v`` plus the ``version`` of ``manifest.json``, and
-``CHANGELOG.md`` must have a ``## [version]`` section with something in it.
-Run it by hand before tagging to see the notes the release will carry::
+fails: the tag must be ``v`` plus the ``version`` of ``manifest.json``, the
+tagged commit must be on ``main`` (with ``--main-ref``), and ``CHANGELOG.md``
+must have a ``## [version]`` section with something in it. Run it by hand
+before tagging to see the notes the release will carry::
 
-    .venv/bin/python scripts/release_notes.py v1.0.0
+    .venv/bin/python scripts/release_notes.py v1.0.0 --main-ref origin/main
 """
 
 from __future__ import annotations
@@ -15,6 +16,8 @@ import argparse
 import json
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import sys
 from typing import TYPE_CHECKING
 
@@ -57,6 +60,29 @@ def check_manifest(tag: str, manifest: Path) -> str:
     return version
 
 
+def check_on_main(repo: Path, main_ref: str) -> None:
+    """Refuse the commit checked out in ``repo`` unless ``main_ref`` contains it."""
+    git = shutil.which("git")
+    if git is None:
+        msg = "git is needed to check that the tagged commit is on main"
+        raise ReleaseError(msg)
+    result = subprocess.run(  # noqa: S603  # list of arguments, no shell, git from PATH
+        [git, "-C", str(repo), "merge-base", "--is-ancestor", "HEAD", main_ref],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return
+    if result.returncode == 1:
+        msg = f"the tagged commit is not on {main_ref}: tag a commit of main"
+    else:
+        msg = (
+            f"cannot compare the tagged commit with {main_ref}: {result.stderr.strip()}"
+        )
+    raise ReleaseError(msg)
+
+
 def changelog_section(changelog: str, version: str) -> str:
     """Return the notes of ``version``: its section without the heading."""
     body: list[str] | None = None
@@ -87,9 +113,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("tag", help="the tag being released, for example v1.0.0-rc.1")
     parser.add_argument("--manifest", type=Path, default=MANIFEST)
     parser.add_argument("--changelog", type=Path, default=CHANGELOG)
+    parser.add_argument(
+        "--main-ref",
+        help="also require the checked out commit to be contained in this ref, "
+        "for example origin/main",
+    )
+    parser.add_argument("--repo", type=Path, default=REPO_ROOT)
     args = parser.parse_args(argv)
     try:
         version = check_manifest(args.tag, args.manifest)
+        if args.main_ref is not None:
+            check_on_main(args.repo, args.main_ref)
         notes = changelog_section(args.changelog.read_text(encoding="utf-8"), version)
     except ReleaseError as err:
         sys.stderr.write(f"error: {err}\n")
