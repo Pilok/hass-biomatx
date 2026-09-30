@@ -48,6 +48,22 @@ the project uses [Semantic Versioning](https://semver.org/).
   healed by a review. The case is rare: the listen proves a master bus when the
   entry is created, so only an entry created before this release, or after a
   silent listen, can hold one.
+- `README.md` for both firmwares: what the integration provides, the hardware
+  and the wiring, how to recognise the firmware from the first frame, the
+  installation as a HACS custom repository, the devices and entities, the
+  `biomatx_invalid_frame` event, the known limits, troubleshooting and removal.
+  The step-by-step setup is written with the config flow release.
+- `custom_components/biomatx/quality_scale.yaml`: the status of each of the 20
+  bronze rules of the Integration Quality Scale (11 done, 5 exempt, 4 todo:
+  `brands`, `config-flow`, `config-flow-test-coverage` and
+  `docs-installation-instructions`), with its structure checked by the
+  repository metadata tests.
+- `release.yml`: pushing a `v*` tag publishes the GitHub Release with the
+  matching `CHANGELOG.md` section as notes, as a pre-release when the tag
+  contains `-`. `scripts/release_notes.py` runs first and fails the workflow
+  when `manifest.json` `version` differs from the tag without the `v`, or when
+  the changelog has no section for that version. It can be run by hand before
+  tagging.
 
 ### Changed
 
@@ -61,6 +77,11 @@ the project uses [Semantic Versioning](https://semver.org/).
 - Reconfiguration reloads the entry only when it changed something. A review
   that changes nothing no longer switches the lights off for the time of a
   reload.
+- Roadmap in `AGENTS.md`, from the owner's decisions of 2026-09-30: the
+  `all_off` service is dropped from `1.1.0`, the `switch` to `button` rename
+  with a unique_id migration is dropped from "Later", and `1.0.0` also needs a
+  week without a module turning unavailable outside a Home Assistant restart,
+  or with an identified and addressed cause.
 
 ### Removed
 
