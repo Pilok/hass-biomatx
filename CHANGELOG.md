@@ -6,8 +6,60 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Bus discovery in the config flow (decision D17 of the plan). Once the serial
+  device is entered and found not to be configured yet, the flow listens to the
+  bus for `PROBE_SECONDS` (4 s) and never writes a byte: it connects a
+  `BiomatxHub` built for every module address (a hub built for the configured
+  count would drop the reports of the others) and without a protocol, so the
+  first valid frame names it. A second step, `modules`, says which protocol and
+  which modules were heard (numbered from 1), proposes the highest module
+  address heard plus one, capped at 7 (never the number of addresses heard: a
+  report missed during the listen must not make the count short), and asks for
+  the optional "all off" scenario as before. A silent bus gives no proposal and
+  the count is entered by hand, as before; so do legacy modules, which only
+  transmit when a button is pressed and never report. A device that cannot be
+  opened keeps the first step up with `cannot_connect`.
+- The protocol the listen detected (`legacy` | `master`) is stored in the config
+  entry when it is created, so the first start skips detection. After a silent
+  listen the key is absent and detection at the first load takes over, as in
+  beta.2.
+- Reconfiguration goes through the same two steps. A loaded entry whose device
+  is unchanged is not listened to (see Fixed): the protocol and the modules
+  heard come from its running hub, and the proposed count is the larger of the
+  configured count and the highest address heard plus one. In every other case
+  (entry not loaded, device changed) the flow listens as above. The stored
+  protocol follows what is heard: it is replaced when the bus speaks another
+  one, kept when the entry's own device is silent (a legacy bus is silent by
+  nature), and dropped when the device changes and the new bus is silent.
+
+### Changed
+
+- Config entries are at **version 3**. The migration now runs one version at a
+  time: 1 to 2 as before, then 2 to 3, which leaves the data of the entry
+  untouched. Entries at version 2 migrate on the first start of this release.
+- The first step of the config flow takes the serial device only; the module
+  count and the scenario moved to the second step, for reconfiguration as well.
+  `translations/en.json` and `fr.json` carry the new `modules` step and the
+  reworded `user` and `reconfigure` steps.
+
+### Removed
+
+- The `binary_sensor` entries of the upstream integration. Since beta.2 the
+  buttons are `event` entities with the same unique ids, and Home Assistant
+  keeps a registry entry per domain, so the old entries stayed behind,
+  unavailable for good. The 2 to 3 migration removes them from the entity
+  registry, for the config entry being migrated only; its `light` and `event`
+  entries are kept.
+
 ### Fixed
 
+- Reconfiguring a bus in service no longer opens the serial device a second
+  time. The previous step tested the device it was given even when the running
+  hub was already reading it: `serialx` opens USB serial devices with exclusive
+  access, so the second open may be refused, and on an Ethernet gateway two
+  readers would share the bytes of the bus.
 - `manifest.json` requires `serialx>=1.10.0,<2` instead of pinning `1.10.0`.
   Home Assistant 2026.9 constrains `serialx` to 1.10.0 and 2026.10 to 1.11.0, so
   a pin on either fails on the other core: hassfest, which runs against the
