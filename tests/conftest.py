@@ -55,12 +55,12 @@ def _fast_bus(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def mock_config_entry() -> MockConfigEntry:
-    """Return a version 2 entry for a 4-module legacy bus with an all-off scenario."""
+    """Return a version 3 entry for a 4-module legacy bus with an all-off scenario."""
     return MockConfigEntry(
         domain=DOMAIN,
         title="BioMatX",
         unique_id=URL,
-        version=2,
+        version=3,
         data={
             "device": URL,
             CONF_MODULE_COUNT: MODULE_COUNT,
@@ -72,12 +72,12 @@ def mock_config_entry() -> MockConfigEntry:
 
 @pytest.fixture
 def master_config_entry() -> MockConfigEntry:
-    """Return a version 2 entry for a 4-module master bus."""
+    """Return a version 3 entry for a 4-module master bus."""
     return MockConfigEntry(
         domain=DOMAIN,
         title="BioMatX",
         unique_id=URL,
-        version=2,
+        version=3,
         data={
             "device": URL,
             CONF_MODULE_COUNT: MODULE_COUNT,
@@ -88,12 +88,12 @@ def master_config_entry() -> MockConfigEntry:
 
 @pytest.fixture
 def undetected_config_entry() -> MockConfigEntry:
-    """Return a version 2 entry without a stored protocol: today's production entry."""
+    """Return a version 3 entry without a stored protocol: a bus silent at setup."""
     return MockConfigEntry(
         domain=DOMAIN,
         title="BioMatX",
         unique_id=URL,
-        version=2,
+        version=3,
         data={"device": URL, CONF_MODULE_COUNT: MODULE_COUNT},
     )
 

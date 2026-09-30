@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -12,8 +13,11 @@ from pytest_homeassistant_custom_component.common import (
     async_capture_events,
 )
 
+from custom_components.biomatx import CURRENT_ENTRY_VERSION
+from custom_components.biomatx.config_flow import BiomatxConfigFlow
 from custom_components.biomatx.const import (
     CONF_MODULE_COUNT,
+    CONF_PROTOCOL,
     DOMAIN,
     EVENT_INVALID_FRAME,
 )
@@ -23,6 +27,7 @@ from .conftest import MODULE_COUNT, URL
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
+    import pytest
 
     from .conftest import SetupIntegration
     from .fake_serial import FakeSerialLink
@@ -121,7 +126,7 @@ async def test_migrate_v1_drops_serial_wait_and_sets_unique_id(
     )
     entry = await setup_integration(legacy)
     assert entry.state is ConfigEntryState.LOADED
-    assert entry.version == 2
+    assert entry.version == 3
     assert entry.unique_id == URL
     assert "serial_wait" not in entry.data
     assert entry.data[CONF_MODULE_COUNT] == MODULE_COUNT
@@ -133,7 +138,7 @@ async def test_migrate_refuses_future_version(
     """An entry written by a newer release is not downgraded silently."""
     future = MockConfigEntry(
         domain=DOMAIN,
-        version=3,
+        version=4,
         unique_id=URL,
         data={"device": URL, CONF_MODULE_COUNT: MODULE_COUNT},
     )
@@ -157,11 +162,19 @@ async def test_unload_keeps_the_link_when_a_platform_fails_to_unload(
     assert hub.connected is True
 
 
-async def test_migrate_v1_renames_legacy_unique_ids_and_removes_relay_devices(
+async def test_migrate_v1_chains_through_v2_to_v3(
     hass: HomeAssistant,
     setup_integration: SetupIntegration,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Upstream entities keep their entity ids; upstream per-relay devices go."""
+    """
+    Upstream entities keep their entity ids, upstream devices and sensors go.
+
+    Version 1 is brought to 2 (unique ids renamed, per-relay devices removed),
+    then to 3, which removes the ``binary_sensor`` entries the first step just
+    renamed: the integration has no such platform any more.
+    """
+    caplog.set_level(logging.INFO, logger="custom_components.biomatx")
     legacy = MockConfigEntry(
         domain=DOMAIN,
         title="biomatx",
@@ -189,12 +202,12 @@ async def test_migrate_v1_renames_legacy_unique_ids_and_removes_relay_devices(
     )
     entry = await setup_integration(legacy)
     assert entry.state is ConfigEntryState.LOADED
+    assert entry.version == 3
     light = entity_registry.async_get("light.1_7")
     assert light is not None
     assert light.unique_id == f"{entry.entry_id}-relay-1-7"
-    button = entity_registry.async_get("binary_sensor.1_7")
-    assert button is not None
-    assert button.unique_id == f"{entry.entry_id}-switch-1-7"
+    assert entity_registry.async_get("binary_sensor.1_7") is None
+    assert hass.states.get("binary_sensor.1_7") is None
     assert (
         device_registry.async_get_device_by_identifier((DOMAIN, "1_7"), entry.entry_id)
         is None
@@ -202,6 +215,71 @@ async def test_migrate_v1_renames_legacy_unique_ids_and_removes_relay_devices(
     assert hass.states.get("light.1_7") is not None
     assert hass.states.get("light.biomatx_module_2_relay_8") is None
     assert entity_registry.async_get("light.other").unique_id == "already-migrated"
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Migrated config entry")
+    ] == [
+        "Migrated config entry biomatx to version 2",
+        "Migrated config entry biomatx to version 3",
+    ]
+
+
+async def test_migrate_v2_removes_the_orphaned_binary_sensors_of_the_entry(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+) -> None:
+    """
+    The upstream ``binary_sensor`` entries go; lights, events and data stay.
+
+    Since ``1.0.0-beta.2`` the buttons are ``event`` entities with the same unique
+    ids: the registry keeps the old ``binary_sensor`` entry beside them, forever
+    unavailable. Another BioMatX entry's registry entries are not touched.
+    """
+    data = {"device": URL, CONF_MODULE_COUNT: MODULE_COUNT, CONF_PROTOCOL: "master"}
+    v2 = MockConfigEntry(
+        domain=DOMAIN, title="BioMatX", unique_id=URL, version=2, data=dict(data)
+    )
+    v2.add_to_hass(hass)
+    other = MockConfigEntry(
+        domain=DOMAIN,
+        title="BioMatX 2",
+        unique_id="/dev/ttyUSB1",
+        version=3,
+        data={"device": "/dev/ttyUSB1", CONF_MODULE_COUNT: 1},
+    )
+    other.add_to_hass(hass)
+    registry = er.async_get(hass)
+    unique_id = f"{v2.entry_id}-switch-0-0"
+    light = registry.async_get_or_create(
+        "light", DOMAIN, f"{v2.entry_id}-relay-0-0", config_entry=v2
+    )
+    event = registry.async_get_or_create("event", DOMAIN, unique_id, config_entry=v2)
+    orphans = [
+        registry.async_get_or_create(
+            "binary_sensor", DOMAIN, unique_id, config_entry=v2
+        ),
+        registry.async_get_or_create(
+            "binary_sensor", DOMAIN, f"{v2.entry_id}-switch-3-9", config_entry=v2
+        ),
+    ]
+    foreign = registry.async_get_or_create(
+        "binary_sensor", DOMAIN, f"{other.entry_id}-switch-0-0", config_entry=other
+    )
+    entry = await setup_integration(v2)
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.version == 3
+    assert dict(entry.data) == data
+    for orphan in orphans:
+        assert registry.async_get(orphan.entity_id) is None
+    assert registry.async_get(light.entity_id) is not None
+    assert registry.async_get(event.entity_id) is not None
+    assert registry.async_get(foreign.entity_id) is not None
+
+
+def test_config_flow_and_migration_agree_on_the_entry_version() -> None:
+    """Entries the flow creates are at the version the migration ends on."""
+    assert BiomatxConfigFlow.VERSION == CURRENT_ENTRY_VERSION == 3
 
 
 async def test_invalid_frame_fires_a_bus_event_in_1_based_terms(
