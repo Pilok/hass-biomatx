@@ -9,30 +9,40 @@ the project uses [Semantic Versioning](https://semver.org/).
 ### Added
 
 - Bus discovery in the config flow (decision D17 of the plan). Once the serial
-  device is entered and found not to be configured yet, the flow listens to the
-  bus for `PROBE_SECONDS` (4 s) and never writes a byte: it connects a
-  `BiomatxHub` built for every module address (a hub built for the configured
-  count would drop the reports of the others) and without a protocol, so the
-  first valid frame names it. A second step, `modules`, says which protocol and
-  which modules were heard (numbered from 1), proposes the highest module
-  address heard plus one, capped at 7 (never the number of addresses heard: a
-  report missed during the listen must not make the count short), and asks for
-  the optional "all off" scenario as before. A silent bus gives no proposal and
-  the count is entered by hand, as before; so do legacy modules, which only
-  transmit when a button is pressed and never report. A device that cannot be
-  opened keeps the first step up with `cannot_connect`.
-- The protocol the listen detected (`legacy` | `master`) is stored in the config
-  entry when it is created, so the first start skips detection. After a silent
-  listen the key is absent and detection at the first load takes over, as in
-  beta.2.
+  device is entered and found neither configured nor being configured, the flow
+  listens to the bus for `PROBE_SECONDS` (8 s) and never writes a byte. A second
+  step, `modules`, lists the protocol and the modules heard (numbered from 1),
+  proposes the highest module address heard plus one, capped at 7 (never the
+  number of addresses heard: a report missed during the listen must not make the
+  count short), and asks for the optional "all off" scenario as before. A silent
+  bus gives no proposal and the count is entered by hand, as it is with legacy
+  modules, which only transmit when a button is pressed and never report. A
+  device that cannot be opened keeps the first step up with `cannot_connect`.
+- The window holds two report periods of the slowest module of the Enersol hall
+  capture (3.95 to 4.14 s). Over the 280 intervals of that capture, 4 s would
+  have missed that module at about 5 % of the positions with 5 % of the reports
+  lost, 8 s at 0.3 %.
+- The listen runs a `BiomatxHub` built for every module address (a hub built for
+  the configured count would drop the reports of the others) that decodes the
+  bus as master. Only a decoded master frame proves that protocol: letting the
+  hub detect would settle on the first read, where the detectors' phantom frame
+  alone reads as a legacy press and hides the reports that follow.
+- The config entry stores `protocol: master` when the listen proved it. The flow
+  never stores `legacy`, a verdict that one stray frame can produce and that
+  would freeze a master entry, and the key is absent after a silent listen: the
+  detection at the first load takes over, as in beta.2.
+- `BiomatxHub.heard_modules()` returns the addresses of the modules that
+  reported since the link came up, the ones the hub drops as unconfigured
+  included.
 - Reconfiguration goes through the same two steps. A loaded entry whose device
-  is unchanged is not listened to (see Fixed): the protocol and the modules
-  heard come from its running hub, and the proposed count is the larger of the
-  configured count and the highest address heard plus one. In every other case
-  (entry not loaded, device changed) the flow listens as above. The stored
-  protocol follows what is heard: it is replaced when the bus speaks another
-  one, kept when the entry's own device is silent (a legacy bus is silent by
-  nature), and dropped when the device changes and the new bus is silent.
+  is unchanged is not listened to (see Fixed): its running hub gives the
+  protocol and the modules heard, a module added to the bus after the entry was
+  set up included, and the proposed count is the larger of the configured count
+  and the highest address heard plus one. Otherwise the flow listens, and a new
+  device is proposed what it hears, whatever the entry held. The stored protocol
+  follows what is heard: replaced when the bus proves another one, kept when it
+  is `master` and the entry's own device is silent, dropped when the device
+  changes and the new bus is silent, and dropped when it is `legacy`.
 
 ### Changed
 
@@ -41,8 +51,11 @@ the project uses [Semantic Versioning](https://semver.org/).
   untouched. Entries at version 2 migrate on the first start of this release.
 - The first step of the config flow takes the serial device only; the module
   count and the scenario moved to the second step, for reconfiguration as well.
-  `translations/en.json` and `fr.json` carry the new `modules` step and the
-  reworded `user` and `reconfigure` steps.
+  `translations/en.json` and `fr.json` carry the new `modules` step, the
+  reworded `user` and `reconfigure` steps and the `already_in_progress` abort.
+- Reconfiguration reloads the entry only when it changed something. A review
+  that changes nothing no longer switches the lights off for the time of a
+  reload.
 
 ### Removed
 

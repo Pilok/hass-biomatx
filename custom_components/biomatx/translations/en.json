@@ -14,7 +14,7 @@
       },
       "modules": {
         "title": "Modules on the bus",
-        "description": "BioMatX listened to the bus without sending anything.\n\n- Firmware protocol: {protocol}\n- Modules heard: {modules}\n\nThe number of modules is pre-filled with the highest module address heard. Correct it if a module stayed silent, or enter it by hand when nothing was heard: legacy modules only transmit when a button is pressed.",
+        "description": "What BioMatX heard on the bus, without sending anything:\n\n- Firmware protocol: {protocol}\n- Modules heard: {modules}\n\nThe number of modules is pre-filled with the highest module address heard. Correct it if a module stayed silent, or enter it by hand when nothing was heard: legacy modules only transmit when a button is pressed.",
         "data": {
           "module_count": "Number of modules",
           "all_off_scenario": "\"All off\" scenario"
@@ -40,6 +40,7 @@
     },
     "abort": {
       "already_configured": "This serial device is already configured.",
+      "already_in_progress": "Configuration of this serial device is already in progress.",
       "reconfigure_successful": "The BioMatX configuration was updated."
     }
   },

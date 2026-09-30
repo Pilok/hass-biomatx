@@ -275,6 +275,47 @@ async def test_state_report_for_an_unconfigured_module_is_dropped(
     await stop_hub(hub, task)
 
 
+async def test_hub_remembers_the_modules_it_hears_beyond_the_configured_count(
+    fake_serial: FakeSerialLink,
+) -> None:
+    """
+    A dropped report still tells that the module exists, for the config flow.
+
+    A module added to the bus after the entry was set up is not followed, but the
+    hub knows its address, so a reconfiguration can propose it.
+    """
+    hub = make_hub(module_count=2)
+    task = await run_hub(hub)
+    assert hub.heard_modules() == frozenset()
+    fake_serial.feed(f"{fm.STATE_HOUSE_M1} {fm.STATE_HOUSE_M3} {fm.STATE_HOUSE_M4}")
+    await settle()
+    assert hub.heard_modules() == {0, 2, 3}
+    assert hub.module_last_seen(0) is not None
+    assert hub.module_last_seen(2) is None  # still not followed
+    assert hub.frames_dropped == 2
+    await stop_hub(hub, task)
+    assert hub.heard_modules() == frozenset()
+
+
+async def test_link_loss_forgets_the_modules_heard(
+    fake_serial: FakeSerialLink,
+) -> None:
+    """After an outage nothing is known again, configured modules or not."""
+    hub = make_hub(module_count=2)
+    task = await run_hub(hub)
+    fake_serial.feed(f"{fm.STATE_HOUSE_M1} {fm.STATE_HOUSE_M4}")
+    await settle()
+    assert hub.heard_modules() == {0, 3}
+    fake_serial.drop_link()
+    await settle(50)
+    assert hub.connected is True
+    assert hub.heard_modules() == frozenset()
+    fake_serial.feed(fm.STATE_HOUSE_M4)
+    await settle()
+    assert hub.heard_modules() == {3}
+    await stop_hub(hub, task)
+
+
 async def test_checksum_error_is_counted_and_the_stream_goes_on(
     running: BiomatxHub, fake_serial: FakeSerialLink
 ) -> None:

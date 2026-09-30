@@ -42,12 +42,16 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 TITLE = "BioMatX"
-PROBE_SECONDS = 4.0
+PROBE_SECONDS = 8.0
 """
 Seconds the flow listens to the bus before it proposes a module count.
 
-A master module reports its relays every 3 s: the window holds one full period
-and a second to spare. Read when the probe runs, so tests can shorten it.
+Two report periods of the slowest module of the Enersol hall capture of
+2026-09-14, which reports every 3.95 to 4.14 s (280 intervals). A window of 4 s
+missed that module at 0.04 % of the positions with no report lost and at about
+5 % with 5 % of the reports lost; a window of 8 s holds two of its reports and
+missed it at 0.3 % with the same losses. Read when the probe runs, so tests can
+shorten it.
 """
 NOTHING_HEARD = "-"
 """Shown where the bus said nothing; the same text in every language."""
@@ -55,7 +59,7 @@ NOTHING_HEARD = "-"
 
 @dataclass(frozen=True, slots=True)
 class BusSurvey:
-    """What the bus said: its protocol, once a frame named it, and the modules heard."""
+    """What the bus said: its protocol, when known, and the modules heard."""
 
     protocol: Protocol | None = None
     modules: frozenset[int] = frozenset()
@@ -83,26 +87,20 @@ class BusSurvey:
         }
 
 
-def _seen_modules(hub: BiomatxHub) -> frozenset[int]:
-    """Return the addresses of the modules ``hub`` received a state report from."""
-    return frozenset(
-        address
-        for address in range(MAX_MODULES)
-        if hub.module_last_seen(address) is not None
-    )
-
-
 async def _async_probe(hass: HomeAssistant, device: str) -> BusSurvey | None:
     """
     Listen to the bus for ``PROBE_SECONDS`` and return what it said.
 
-    Read only: a hub writes nothing when it connects or decodes. It is built for
-    every module address, or the reports of modules beyond the count of the
-    entry would be dropped as unconfigured, and without a protocol, so that the
-    first valid frame names it. The modules are read before the hub is closed,
-    which forgets them. Returns ``None`` when the device cannot be opened.
+    Read only: a hub writes nothing when it connects or decodes. The hub is built
+    for every module address, or the reports of modules beyond the count of the
+    entry would be dropped as unconfigured. It decodes the bus as master: only a
+    decoded master frame proves that protocol, and the flow stores nothing else.
+    Letting the hub detect would settle on the first read, where the detectors'
+    phantom frame alone reads as a legacy press and hides the reports that
+    follow. The modules are read before the hub is closed, which forgets them.
+    Returns ``None`` when the device cannot be opened.
     """
-    hub = BiomatxHub(device, MAX_MODULES, None)
+    hub = BiomatxHub(device, MAX_MODULES, None, protocol=Protocol.MASTER)
     try:
         await hub.async_connect()
     except BiomatxConnectionError:
@@ -110,7 +108,8 @@ async def _async_probe(hass: HomeAssistant, device: str) -> BusSurvey | None:
     hass.async_create_background_task(hub.async_run(), name=f"{DOMAIN} probe {device}")
     try:
         await asyncio.sleep(PROBE_SECONDS)
-        return BusSurvey(hub.protocol, _seen_modules(hub))
+        proved = Protocol.MASTER if hub.stats.frames else None
+        return BusSurvey(proved, hub.heard_modules())
     finally:
         await hub.async_close()
 
@@ -123,16 +122,16 @@ async def _async_survey_entry(
 
     The device of a loaded entry is not opened again: its hub is reading the bus
     and a second reader would take a share of the bytes. The hub's protocol and
-    the modules it heard are read instead. Any other device is listened to. A
-    silent listen on the entry's own device keeps its stored protocol (a legacy
-    bus is silent by nature); on another device the stored protocol says nothing
-    and is dropped.
+    the modules it heard, configured or not, are read instead. Any other device
+    is listened to. A silent listen on the entry's own device keeps its stored
+    protocol, which the modules step then shows; on another device the stored
+    protocol says nothing and is dropped.
     """
     if device != entry.data[CONF_DEVICE]:
         return await _async_probe(hass, device)
     if entry.state is ConfigEntryState.LOADED:
         hub: BiomatxHub = entry.runtime_data.hub
-        return BusSurvey(hub.protocol, _seen_modules(hub))
+        return BusSurvey(hub.protocol, hub.heard_modules())
     survey = await _async_probe(hass, device)
     stored = entry.data.get(CONF_PROTOCOL)
     if survey is None or survey.protocol is not None or stored is None:
@@ -181,14 +180,21 @@ def _modules_schema(count: int | None, scenario: int | None) -> vol.Schema:
 def _entry_data(
     device: str, user_input: Mapping[str, Any], protocol: Protocol | None
 ) -> dict[str, Any]:
-    """Turn the form values into entry data: integers, scenario stored 0-based."""
+    """
+    Turn the form values into entry data: integers, scenario stored 0-based.
+
+    Only ``master`` is stored. A decoded master frame proves it, whereas a legacy
+    verdict can come from one stray frame (the detectors' phantom frame alone
+    reads as a legacy press) and would freeze a master entry. Without the key, the
+    detection at the first load decides.
+    """
     data: dict[str, Any] = {
         CONF_DEVICE: device,
         CONF_MODULE_COUNT: int(user_input[CONF_MODULE_COUNT]),
     }
     if (scenario := user_input.get(CONF_ALL_OFF_SCENARIO)) is not None:
         data[CONF_ALL_OFF_ADDRESS] = int(scenario) - 1
-    if protocol is not None:
+    if protocol is Protocol.MASTER:
         data[CONF_PROTOCOL] = protocol.value
     return data
 
@@ -265,21 +271,27 @@ class BiomatxConfigFlow(ConfigFlow, domain=DOMAIN):
         """
         Ask for the number of modules and the optional all-off scenario.
 
-        The count is pre-filled with what the bus said. A reconfiguration never
-        proposes fewer modules than the entry has and keeps its scenario.
+        The count is pre-filled with what the bus said. A reconfiguration of the
+        same device never proposes fewer modules than the entry has; another
+        device has a bus of its own. The scenario is kept. The entry reloads only
+        when something changed: a review must not cut the lights.
         """
         reconfiguring = self.source == SOURCE_RECONFIGURE
         if user_input is not None:
             data = _entry_data(self._device, user_input, self._survey.protocol)
             if reconfiguring:
                 return self.async_update_reload_and_abort(
-                    self._get_reconfigure_entry(), unique_id=self._device, data=data
+                    self._get_reconfigure_entry(),
+                    unique_id=self._device,
+                    data=data,
+                    reload_even_if_entry_is_unchanged=False,
                 )
             return self.async_create_entry(title=TITLE, data=data)
         count, scenario = self._survey.suggested_count, None
         if reconfiguring:
             entry_data = self._get_reconfigure_entry().data
-            count = max(entry_data[CONF_MODULE_COUNT], count or 0)
+            if self._device == entry_data[CONF_DEVICE]:
+                count = max(entry_data[CONF_MODULE_COUNT], count or 0)
             if (address := entry_data.get(CONF_ALL_OFF_ADDRESS)) is not None:
                 scenario = address + 1
         return self.async_show_form(

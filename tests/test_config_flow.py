@@ -6,7 +6,11 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
-from homeassistant.config_entries import SOURCE_RECONFIGURE, SOURCE_USER
+from homeassistant.config_entries import (
+    SOURCE_RECONFIGURE,
+    SOURCE_USER,
+    ConfigEntryState,
+)
 from homeassistant.const import CONF_DEVICE
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
 import pytest
@@ -39,6 +43,8 @@ OTHER_URL = "socket://192.168.1.50:8899"
 REAL_PROBE_SECONDS = config_flow.PROBE_SECONDS
 """The listening window as shipped, read before any fixture shortens it."""
 FAST_PROBE_SECONDS = 0.05
+SLOWEST_REPORT_PERIOD = 4.0
+"""Report period of the slowest module of the Enersol hall capture (3.95 to 4.14 s)."""
 HOUSE_REPORTS = (
     f"{fm.STATE_HOUSE_M1} {fm.STATE_HOUSE_M2} {fm.STATE_HOUSE_M3} {fm.STATE_HOUSE_M4}"
 )
@@ -107,12 +113,13 @@ async def hear_bus(
     result = await configure(hass, result, {CONF_DEVICE: URL})
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "modules"
+    assert result["last_step"] is True
     return result
 
 
-def test_listening_window_is_four_seconds() -> None:
-    """Decision D17 of the plan: the flow listens for 4 s, one state period and more."""
-    assert REAL_PROBE_SECONDS == 4.0
+def test_listening_window_spans_two_periods_of_the_slowest_module() -> None:
+    """One lost report must not hide a module: the window holds two of its reports."""
+    assert REAL_PROBE_SECONDS >= 2 * SLOWEST_REPORT_PERIOD
 
 
 async def test_user_form_asks_for_the_device_and_announces_the_listen(
@@ -122,7 +129,8 @@ async def test_user_form_asks_for_the_device_and_announces_the_listen(
     monkeypatch.setattr(config_flow, "PROBE_SECONDS", REAL_PROBE_SECONDS)
     result = await start_user_flow(hass)
     assert [str(key) for key in result["data_schema"].schema] == [CONF_DEVICE]
-    assert result["description_placeholders"] == {"seconds": "4"}
+    assert result["description_placeholders"] == {"seconds": f"{REAL_PROBE_SECONDS:g}"}
+    assert result["last_step"] is False
 
 
 async def test_user_flow_hears_a_master_bus_and_stores_its_protocol(
@@ -201,6 +209,35 @@ async def test_user_flow_keeps_listening_for_the_whole_window(
     assert result["description_placeholders"]["modules"] == "1, 4"
 
 
+async def test_user_flow_hears_a_slow_module_whose_report_is_lost(
+    hass: HomeAssistant, fake_serial: FakeSerialLink, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    A module reporting every 4 s is heard although one of its reports is lost.
+
+    The slowest module of the Enersol hall capture reports every 3.95 to 4.14 s, so
+    a window of one period holds one report and a collision can hide it. The window
+    as shipped is replayed at a twentieth of its length, against a period scaled
+    the same way: the first report (at 0.1 s) is damaged and the next one, one
+    period later, is valid. Two periods hear it; one period would not.
+    """
+    scale = 20
+    monkeypatch.setattr(config_flow, "PROBE_SECONDS", REAL_PROBE_SECONDS / scale)
+
+    async def reports() -> None:
+        await asyncio.sleep(0.1)
+        fake_serial.feed(fm.STATE_M1_BAD_CHECKSUM)  # lost to a collision
+        await asyncio.sleep(SLOWEST_REPORT_PERIOD / scale)
+        fake_serial.feed(fm.STATE_HOUSE_M1)
+
+    result = await start_user_flow(hass)
+    later = asyncio.create_task(reports())
+    result = await configure(hass, result, {CONF_DEVICE: URL})
+    await later
+    assert result["description_placeholders"]["modules"] == "1"
+    assert suggested(result["data_schema"], CONF_MODULE_COUNT) == 1
+
+
 async def test_user_flow_silent_bus_asks_for_the_count_by_hand(
     hass: HomeAssistant, fake_serial: FakeSerialLink
 ) -> None:
@@ -213,22 +250,59 @@ async def test_user_flow_silent_bus_asks_for_the_count_by_hand(
     assert result["result"].data == {CONF_DEVICE: URL, CONF_MODULE_COUNT: 3}
 
 
-async def test_user_flow_legacy_press_names_the_protocol_but_counts_no_module(
+async def test_user_flow_legacy_frames_store_no_protocol(
     hass: HomeAssistant, fake_serial: FakeSerialLink
 ) -> None:
-    """Legacy modules only speak on a press and never report: count by hand."""
+    """
+    Two-byte frames prove nothing the flow keeps: only master is stored.
+
+    Legacy modules speak on a press only and never report, and a legacy verdict
+    can come from one stray frame. The entry has no protocol, and the detection
+    at the first load takes over.
+    """
     result = await hear_bus(hass, fake_serial, LEGACY_PRESS)
     assert suggested(result["data_schema"], CONF_MODULE_COUNT) is None
+    assert result["description_placeholders"] == {"protocol": "-", "modules": "-"}
+    result = await configure(hass, result, {CONF_MODULE_COUNT: 4})
+    assert result["result"].data == {CONF_DEVICE: URL, CONF_MODULE_COUNT: 4}
+
+
+async def test_user_flow_phantom_frame_alone_proves_no_protocol(
+    hass: HomeAssistant, fake_serial: FakeSerialLink
+) -> None:
+    """The detectors' phantom frame reads as a legacy press: it proves nothing."""
+    result = await hear_bus(hass, fake_serial, fm.PHANTOM_PRESS_M4_OUT11)
+    assert result["description_placeholders"] == {"protocol": "-", "modules": "-"}
+    result = await configure(hass, result, {CONF_MODULE_COUNT: 4})
+    assert CONF_PROTOCOL not in result["result"].data
+
+
+async def test_user_flow_phantom_frame_first_does_not_hide_a_master_bus(
+    hass: HomeAssistant, fake_serial: FakeSerialLink, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    The phantom frame alone in the first read, the reports in a later one.
+
+    Decided on that first read, the frame would read as a legacy press and the
+    modules would go unheard. The entry must get ``master`` and the four modules.
+    """
+    monkeypatch.setattr(config_flow, "PROBE_SECONDS", 0.3)
+    fake_serial.preload(fm.PHANTOM_PRESS_M4_OUT11)
+
+    async def reports() -> None:
+        await asyncio.sleep(0.1)
+        fake_serial.feed(HOUSE_REPORTS)
+
+    result = await start_user_flow(hass)
+    later = asyncio.create_task(reports())
+    result = await configure(hass, result, {CONF_DEVICE: URL})
+    await later
     assert result["description_placeholders"] == {
-        "protocol": "legacy",
-        "modules": "-",
+        "protocol": "master",
+        "modules": "1, 2, 3, 4",
     }
     result = await configure(hass, result, {CONF_MODULE_COUNT: 4})
-    assert result["result"].data == {
-        CONF_DEVICE: URL,
-        CONF_MODULE_COUNT: 4,
-        CONF_PROTOCOL: "legacy",
-    }
+    assert result["result"].data[CONF_PROTOCOL] == "master"
 
 
 async def test_user_flow_scenario_is_optional(
@@ -254,6 +328,27 @@ async def test_the_probe_writes_nothing_on_the_bus(
     assert bytes(fake_serial.written) == b""
     assert fake_serial.writer is not None
     assert fake_serial.writer.closed is True
+
+
+async def test_abandoning_the_flow_during_the_listen_closes_the_port_and_its_reader(
+    hass: HomeAssistant, fake_serial: FakeSerialLink, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A flow cancelled while it listens leaves no open port and no reader task."""
+    monkeypatch.setattr(config_flow, "PROBE_SECONDS", 30)
+    result = await start_user_flow(hass)
+    listening = asyncio.create_task(configure(hass, result, {CONF_DEVICE: URL}))
+    await asyncio.sleep(0.1)
+    assert fake_serial.writer is not None
+    assert fake_serial.writer.closed is False
+    listening.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await listening
+    assert fake_serial.writer.closed is True
+    assert not [
+        task
+        for task in asyncio.all_tasks()
+        if task.get_name().startswith(f"{DOMAIN} probe")
+    ]
 
 
 async def test_user_flow_cannot_connect_shows_error_then_recovers(
@@ -284,6 +379,19 @@ async def test_user_flow_aborts_when_device_already_configured(
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
     assert fake_serial.opens == []
+
+
+async def test_user_flow_aborts_when_the_device_is_already_being_configured(
+    hass: HomeAssistant, fake_serial: FakeSerialLink
+) -> None:
+    """A second flow for a device another flow holds does not listen to the bus."""
+    await hear_bus(hass, fake_serial, HOUSE_REPORTS)
+    opened = len(fake_serial.opens)
+    second = await start_user_flow(hass)
+    second = await configure(hass, second, {CONF_DEVICE: URL})
+    assert second["type"] is FlowResultType.ABORT
+    assert second["reason"] == "already_in_progress"
+    assert len(fake_serial.opens) == opened
 
 
 @pytest.mark.parametrize(
@@ -320,6 +428,7 @@ async def reconfigure_to_modules(
     result = await configure(hass, result, {CONF_DEVICE: device})
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "modules"
+    assert result["last_step"] is True
     return result
 
 
@@ -332,6 +441,7 @@ async def test_reconfigure_form_asks_for_the_device_only(
     schema = result["data_schema"]
     assert [str(key) for key in schema.schema] == [CONF_DEVICE]
     assert suggested(schema, CONF_DEVICE) == URL
+    assert result["last_step"] is False
     assert fake_serial.opens == []
 
 
@@ -381,10 +491,28 @@ async def test_reconfigure_never_proposes_fewer_modules_than_configured(
     assert result["description_placeholders"]["modules"] == "1, 2"
 
 
-async def test_reconfigure_silent_bus_keeps_the_entry_values_and_protocol(
+async def test_reconfigure_silent_bus_keeps_a_stored_master_protocol(
+    hass: HomeAssistant,
+    fake_serial: FakeSerialLink,
+    master_config_entry: MockConfigEntry,
+) -> None:
+    """A master verdict was proved once by a frame: a silent listen does not undo it."""
+    master_config_entry.add_to_hass(hass)
+    result = await reconfigure_to_modules(hass, master_config_entry)
+    assert result["description_placeholders"] == {"protocol": "master", "modules": "-"}
+    result = await configure(hass, result, {CONF_MODULE_COUNT: MODULE_COUNT})
+    assert result["type"] is FlowResultType.ABORT
+    assert master_config_entry.data == {
+        CONF_DEVICE: URL,
+        CONF_MODULE_COUNT: MODULE_COUNT,
+        CONF_PROTOCOL: "master",
+    }
+
+
+async def test_reconfigure_silent_bus_drops_a_stored_legacy_protocol(
     hass: HomeAssistant, fake_serial: FakeSerialLink, mock_config_entry: MockConfigEntry
 ) -> None:
-    """A legacy bus is silent by nature: a silent listen must not drop its protocol."""
+    """The flow never stores legacy: the next load detects the protocol again."""
     mock_config_entry.add_to_hass(hass)
     result = await reconfigure_to_modules(hass, mock_config_entry)
     assert result["description_placeholders"] == {"protocol": "legacy", "modules": "-"}
@@ -396,7 +524,6 @@ async def test_reconfigure_silent_bus_keeps_the_entry_values_and_protocol(
         CONF_DEVICE: URL,
         CONF_MODULE_COUNT: 4,
         CONF_ALL_OFF_ADDRESS: 5,
-        CONF_PROTOCOL: "legacy",
     }
 
 
@@ -428,7 +555,6 @@ async def test_reconfigure_updates_data_and_reloads(
         CONF_DEVICE: URL,
         CONF_MODULE_COUNT: 3,
         CONF_ALL_OFF_ADDRESS: 1,
-        CONF_PROTOCOL: "legacy",
     }
     assert mock_config_entry.unique_id == URL
 
@@ -461,13 +587,25 @@ async def test_reconfigure_new_device_listens_and_the_protocol_follows(
     assert mock_config_entry.data[CONF_PROTOCOL] == "master"
 
 
-async def test_reconfigure_new_silent_device_drops_the_stored_protocol(
+async def test_reconfigure_new_device_proposes_what_it_hears_not_the_configured_count(
     hass: HomeAssistant, fake_serial: FakeSerialLink, mock_config_entry: MockConfigEntry
 ) -> None:
-    """The old protocol says nothing about another bus: detection takes over."""
+    """The count of the entry says nothing about another bus: two modules, two."""
+    mock_config_entry.add_to_hass(hass)
+    fake_serial.preload(f"{fm.STATE_HOUSE_M1} {fm.STATE_HOUSE_M2}")
+    result = await reconfigure_to_modules(hass, mock_config_entry, OTHER_URL)
+    assert suggested(result["data_schema"], CONF_MODULE_COUNT) == 2
+    assert suggested(result["data_schema"], CONF_ALL_OFF_SCENARIO) == 6
+
+
+async def test_reconfigure_new_silent_device_proposes_nothing_and_drops_the_protocol(
+    hass: HomeAssistant, fake_serial: FakeSerialLink, mock_config_entry: MockConfigEntry
+) -> None:
+    """The old protocol and count say nothing about another bus: by hand, detected."""
     mock_config_entry.add_to_hass(hass)
     result = await reconfigure_to_modules(hass, mock_config_entry, OTHER_URL)
     assert result["description_placeholders"] == {"protocol": "-", "modules": "-"}
+    assert suggested(result["data_schema"], CONF_MODULE_COUNT) is None
     result = await configure(hass, result, {CONF_MODULE_COUNT: MODULE_COUNT})
     assert result["type"] is FlowResultType.ABORT
     assert CONF_PROTOCOL not in mock_config_entry.data
@@ -527,16 +665,37 @@ async def test_reconfigure_loaded_entry_reads_the_running_hub_and_opens_no_port(
         "protocol": "master",
         "modules": "1, 2, 3, 4",
     }
-    result = await configure(hass, result, {CONF_MODULE_COUNT: 4})
+    result = await configure(hass, result, {CONF_MODULE_COUNT: 3})
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
     await hass.async_block_till_done()
     assert entry.data == {
         CONF_DEVICE: URL,
-        CONF_MODULE_COUNT: 4,
+        CONF_MODULE_COUNT: 3,
         CONF_PROTOCOL: "master",
     }
-    assert len(fake_serial.opens) == 2  # the reload, not the flow
+    assert len(fake_serial.opens) == 2  # the change reloads the entry, not the flow
+
+
+async def test_reconfigure_without_a_change_does_not_reload_the_entry(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+    master_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """A review that changes nothing must not cut the 40 lights for a reload."""
+    entry = await setup_integration(master_config_entry)
+    fake_serial.feed(HOUSE_REPORTS)
+    await settle()
+    await hass.async_block_till_done()
+    result = await reconfigure_to_modules(hass, entry)
+    result = await configure(hass, result, {CONF_MODULE_COUNT: MODULE_COUNT})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    assert len(fake_serial.opens) == 1
+    assert entry.runtime_data.hub.connected is True
 
 
 async def test_reconfigure_loaded_entry_on_a_silent_bus_keeps_the_configured_count(
@@ -553,6 +712,43 @@ async def test_reconfigure_loaded_entry_on_a_silent_bus_keeps_the_configured_cou
     assert result["description_placeholders"] == {"protocol": "master", "modules": "-"}
 
 
+async def test_reconfigure_loaded_entry_proposes_a_module_its_hub_drops_as_unconfigured(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+    master_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """A fifth module added to the bus is dropped by the hub and found by the flow."""
+    entry = await setup_integration(master_config_entry)  # four modules configured
+    fake_serial.feed(f"{HOUSE_REPORTS} {state_report(4)}")
+    await settle()
+    await hass.async_block_till_done()
+    result = await reconfigure_to_modules(hass, entry)
+    assert len(fake_serial.opens) == 1
+    assert suggested(result["data_schema"], CONF_MODULE_COUNT) == 5
+    assert result["description_placeholders"]["modules"] == "1, 2, 3, 4, 5"
+
+
+async def test_reconfigure_loaded_entry_with_a_legacy_hub_drops_the_protocol_key(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+    mock_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """The flow stores master only: the entry reloads and detects its bus again."""
+    entry = await setup_integration(mock_config_entry)  # stored protocol: legacy
+    result = await reconfigure_to_modules(hass, entry)
+    assert result["description_placeholders"]["protocol"] == "legacy"
+    result = await configure(
+        hass, result, {CONF_MODULE_COUNT: 4, CONF_ALL_OFF_SCENARIO: 6}
+    )
+    assert result["type"] is FlowResultType.ABORT
+    await hass.async_block_till_done()
+    assert CONF_PROTOCOL not in entry.data
+    assert entry.data[CONF_ALL_OFF_ADDRESS] == 5
+    assert len(fake_serial.opens) == 2  # the dropped key is a change: one reload
+
+
 async def test_reconfigure_loaded_entry_takes_the_protocol_the_hub_detected(
     hass: HomeAssistant,
     setup_integration: SetupIntegration,
@@ -564,13 +760,14 @@ async def test_reconfigure_loaded_entry_takes_the_protocol_the_hub_detected(
     fake_serial.feed(LEGACY_PRESS)
     await settle()
     await hass.async_block_till_done()
+    assert entry.data[CONF_PROTOCOL] == "legacy"  # stored at run time, as in beta.2
     result = await reconfigure_to_modules(hass, entry)
     assert len(fake_serial.opens) == 1
     assert result["description_placeholders"]["protocol"] == "legacy"
     result = await configure(hass, result, {CONF_MODULE_COUNT: 4})
     assert result["type"] is FlowResultType.ABORT
     await hass.async_block_till_done()
-    assert entry.data[CONF_PROTOCOL] == "legacy"
+    assert CONF_PROTOCOL not in entry.data
 
 
 async def test_reconfigure_loaded_entry_moved_to_a_new_device_listens_to_it(

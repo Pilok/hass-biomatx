@@ -14,7 +14,7 @@
       },
       "modules": {
         "title": "Modules sur le bus",
-        "description": "BioMatX a écouté le bus sans rien envoyer.\n\n- Protocole du firmware\u00a0: {protocol}\n- Modules entendus\u00a0: {modules}\n\nLe nombre de modules est prérempli avec la plus haute adresse de module entendue. Corrigez-le si un module est resté muet, ou saisissez-le à la main quand rien n'a été entendu\u00a0: les modules du firmware legacy n'émettent que lorsqu'on appuie sur un bouton.",
+        "description": "Ce que BioMatX a entendu sur le bus, sans rien envoyer\u00a0:\n\n- Protocole du firmware\u00a0: {protocol}\n- Modules entendus\u00a0: {modules}\n\nLe nombre de modules est prérempli avec la plus haute adresse de module entendue. Corrigez-le si un module est resté muet, ou saisissez-le à la main quand rien n'a été entendu\u00a0: les modules du firmware legacy n'émettent que lorsqu'on appuie sur un bouton.",
         "data": {
           "module_count": "Nombre de modules",
           "all_off_scenario": "Scénario « tout éteint »"
@@ -40,6 +40,7 @@
     },
     "abort": {
       "already_configured": "Ce périphérique série est déjà configuré.",
+      "already_in_progress": "La configuration de ce périphérique série est déjà en cours.",
       "reconfigure_successful": "La configuration BioMatX a été mise à jour."
     }
   },

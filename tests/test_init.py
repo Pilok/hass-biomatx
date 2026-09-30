@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import ATTR_RESTORED, STATE_UNAVAILABLE
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -196,6 +197,8 @@ async def test_migrate_v1_chains_through_v2_to_v3(
         suggested_object_id="other",
         config_entry=legacy,
     )
+    # What Home Assistant shows for a registry entry whose entity is gone.
+    hass.states.async_set("binary_sensor.1_7", STATE_UNAVAILABLE, {ATTR_RESTORED: True})
     device_registry = dr.async_get(hass)
     device_registry.async_get_or_create(
         config_entry_id=legacy.entry_id, identifiers={(DOMAIN, "1_7")}, name="1_7"

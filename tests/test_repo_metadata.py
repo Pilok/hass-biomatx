@@ -183,6 +183,24 @@ def test_config_flow_steps_use_the_placeholders_the_flow_provides(
     assert set(PLACEHOLDER.findall(modules)) == {"protocol", "modules"}
 
 
+@pytest.mark.parametrize("language", ["en", "fr"])
+def test_every_abort_reason_the_config_flow_can_raise_is_translated(
+    language: str,
+) -> None:
+    """Home Assistant raises ``already_in_progress`` itself when two flows meet."""
+    prefix = ".config.abort."
+    reasons = {
+        key.removeprefix(prefix)
+        for key in _translation_strings(language)
+        if key.startswith(prefix)
+    }
+    assert {
+        "already_configured",
+        "already_in_progress",
+        "reconfigure_successful",
+    } <= reasons
+
+
 def test_no_strings_json_in_custom_integration() -> None:
     """Home Assistant forbids strings.json for custom integrations."""
     assert not (INTEGRATION_DIR / "strings.json").exists()
