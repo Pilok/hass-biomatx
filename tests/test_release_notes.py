@@ -2,14 +2,17 @@
 Tests for ``scripts/release_notes.py``, the check ``release.yml`` runs on every tag.
 
 The script decides whether a tag may become a GitHub Release: it refuses a tag
-that disagrees with ``manifest.json`` or that the changelog does not describe,
-and otherwise prints the changelog section that becomes the release notes.
+that disagrees with ``manifest.json``, a commit that ``main`` does not contain,
+or a version that the changelog does not describe, and otherwise prints the
+changelog section that becomes the release notes.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
+import subprocess
 from typing import TYPE_CHECKING
 
 import pytest
@@ -18,7 +21,7 @@ import yaml
 from scripts import release_notes
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -60,7 +63,11 @@ def release(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Release:
     """Return a runner: write a manifest and a changelog, run the script on a tag."""
 
     def _release(
-        tag: str, *, manifest_version: str, changelog: str = CHANGELOG
+        tag: str,
+        *,
+        manifest_version: str,
+        changelog: str = CHANGELOG,
+        extra: Sequence[str] = (),
     ) -> tuple[int, str, str]:
         manifest = tmp_path / "manifest.json"
         manifest.write_text(
@@ -70,12 +77,63 @@ def release(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Release:
         changelog_file = tmp_path / "CHANGELOG.md"
         changelog_file.write_text(changelog, encoding="utf-8")
         status = release_notes.main(
-            [tag, "--manifest", str(manifest), "--changelog", str(changelog_file)]
+            [
+                tag,
+                "--manifest",
+                str(manifest),
+                "--changelog",
+                str(changelog_file),
+                *extra,
+            ]
         )
         out, err = capsys.readouterr()
         return status, out, err
 
     return _release
+
+
+GIT = shutil.which("git")
+
+
+def _git(repo: Path, *args: str) -> None:
+    """Run git in ``repo`` with a fixed identity; the arguments are test constants."""
+    assert GIT is not None
+    subprocess.run(  # noqa: S603  # list of fixed strings, no shell
+        [
+            GIT,
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.test",
+            "-c",
+            "commit.gpgsign=false",
+            *args,
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> Path:
+    """Return a repository whose ``main`` holds two commits."""
+    path = tmp_path / "repo"
+    path.mkdir()
+    _git(path, "init", "--quiet", "--initial-branch", "main")
+    for text in ("one", "two"):
+        (path / "file").write_text(f"{text}\n", encoding="utf-8")
+        _git(path, "add", "file")
+        _git(path, "commit", "--quiet", "--message", text)
+    return path
+
+
+def _commit_on_side_branch(repo: Path) -> None:
+    """Leave HEAD on a commit that ``main`` does not contain."""
+    _git(repo, "switch", "--quiet", "--create", "side")
+    (repo / "file").write_text("side\n", encoding="utf-8")
+    _git(repo, "commit", "--quiet", "--all", "--message", "side")
 
 
 def test_matching_tag_prints_the_changelog_section(release: Release) -> None:
@@ -161,6 +219,57 @@ def test_current_manifest_version_has_a_changelog_section(
     assert capsys.readouterr().out.strip()
 
 
+def test_head_of_main_is_on_main(repo: Path) -> None:
+    """The usual case: the tag sits on the last commit of main."""
+    release_notes.check_on_main(repo, "main")
+
+
+def test_older_commit_of_main_is_on_main(repo: Path) -> None:
+    """Main moved on since the tag was pushed: the commit is still an ancestor."""
+    _git(repo, "switch", "--quiet", "--detach", "HEAD~1")
+    release_notes.check_on_main(repo, "main")
+
+
+def test_commit_of_an_unmerged_branch_is_not_on_main(repo: Path) -> None:
+    """A tag on a branch that never reached main would publish unreviewed code."""
+    _commit_on_side_branch(repo)
+    with pytest.raises(release_notes.ReleaseError, match="not on main"):
+        release_notes.check_on_main(repo, "main")
+
+
+def test_unknown_main_ref_is_an_error_not_a_pass(repo: Path) -> None:
+    """A workflow that fetched no ``origin/main`` must fail, not release."""
+    with pytest.raises(release_notes.ReleaseError, match="cannot compare"):
+        release_notes.check_on_main(repo, "origin/main")
+
+
+def test_tag_on_main_passes_the_main_check(release: Release, repo: Path) -> None:
+    """The check is part of the command the workflow runs, after the version."""
+    status, out, err = release(
+        "v1.0.0-rc.1",
+        manifest_version="1.0.0-rc.1",
+        extra=("--main-ref", "main", "--repo", str(repo)),
+    )
+    assert status == 0
+    assert err == ""
+    assert out.startswith("Scope frozen.")
+
+
+def test_tag_off_main_is_refused_before_anything_is_printed(
+    release: Release, repo: Path
+) -> None:
+    """Nothing is published for a commit that main does not contain."""
+    _commit_on_side_branch(repo)
+    status, out, err = release(
+        "v1.0.0-rc.1",
+        manifest_version="1.0.0-rc.1",
+        extra=("--main-ref", "main", "--repo", str(repo)),
+    )
+    assert status == 1
+    assert out == ""
+    assert "not on main" in err
+
+
 def test_release_workflow_runs_only_on_version_tags() -> None:
     """A release is published from ``v*`` tags with a write scope limited to its job."""
     text = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(
@@ -181,3 +290,17 @@ def test_release_workflow_passes_the_tag_through_the_environment() -> None:
     scripts = [step["run"] for step in steps if "run" in step]
     assert scripts
     assert not [script for script in scripts if "${{" in script]
+
+
+def test_release_workflow_checks_that_the_tag_is_on_main() -> None:
+    """The checkout has the history to compare with, and the script is told to."""
+    text = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+    steps = yaml.safe_load(text)["jobs"]["release"]["steps"]
+    (checkout,) = (
+        step for step in steps if step.get("uses", "").startswith("actions/checkout@")
+    )
+    assert checkout["with"]["fetch-depth"] == 0
+    (check,) = (step for step in steps if "release_notes.py" in step.get("run", ""))
+    assert "--main-ref origin/main" in check["run"]
