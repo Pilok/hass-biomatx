@@ -1,0 +1,75 @@
+# Integration Quality Scale, bronze tier: the 20 rules listed in tiers.json of
+# home-assistant/developers.home-assistant (docs/core/integration-quality-scale,
+# commit 534c999, read on 2026-09-30). A rule is done only when the code or the
+# documentation of this repository holds it. Hassfest validates this file for
+# core integrations only; tests/test_repo_metadata.py checks its structure here.
+# The manifest declares no quality_scale: bronze needs every rule done or exempt.
+rules:
+  # Bronze
+  action-setup:
+    status: exempt
+    comment: The integration registers no service actions.
+  appropriate-polling:
+    status: exempt
+    comment: >-
+      The integration does not poll. The hub reads the bus continuously and
+      pushes every change to the entities, which set should_poll to False.
+  brands:
+    status: todo
+    comment: >-
+      No brand/ directory yet. Since Home Assistant 2026.3 a custom integration
+      ships its images in custom_components/biomatx/brand/, at least icon.png
+      (256x256). The HACS brands check is ignored in validate.yml until then.
+  common-modules:
+    status: done
+    comment: >-
+      The base entity is in entity.py. There is no coordinator: the hub in
+      hub.py pushes the state.
+  config-flow-test-coverage:
+    status: todo
+    comment: >-
+      config_flow.py is at 100 % statement coverage, the user step recovers
+      from cannot_connect and a second entry for one device is refused. The
+      reconfigure test for cannot_connect stops at the error and does not
+      finish the flow afterwards.
+  config-flow:
+    status: todo
+    comment: >-
+      data_description is set on every field. The module count and the optional
+      all-off scenario are stored in the entry data, not in its options, to be
+      settled in the config flow pull request (1.0.0-beta.3).
+  dependency-transparency:
+    status: done
+    comment: >-
+      The only requirement, serialx 1.10.0, is licensed Apache-2.0, is on PyPI,
+      is published from a public GitHub Actions workflow with PyPI
+      attestations, and is tagged v1.10.0 in its repository.
+  docs-actions:
+    status: exempt
+    comment: The integration provides no service actions.
+  docs-conditions:
+    status: exempt
+    comment: The integration provides no conditions.
+  docs-high-level-description: done
+  docs-installation-instructions:
+    status: todo
+    comment: >-
+      README.md lists the prerequisites and the HACS installation. The
+      step-by-step setup is written after the config flow pull request
+      (1.0.0-beta.3).
+  docs-removal-instructions: done
+  docs-triggers:
+    status: exempt
+    comment: The integration provides no triggers.
+  entity-event-setup: done
+  entity-unique-id: done
+  has-entity-name: done
+  runtime-data: done
+  test-before-configure:
+    status: done
+    comment: >-
+      The user and reconfigure steps open the serial device and show
+      cannot_connect when they cannot. They do not check yet that modules
+      answer on the bus.
+  test-before-setup: done
+  unique-config-entry: done
