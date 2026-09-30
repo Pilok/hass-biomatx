@@ -13,7 +13,7 @@
     "serialx"
   ],
   "requirements": [
-    "serialx==1.10.0"
+    "serialx>=1.10.0,<2"
   ],
   "version": "1.0.0-beta.2"
 }
