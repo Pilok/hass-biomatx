@@ -4,6 +4,8 @@
 # documentation of this repository holds it. Hassfest validates this file for
 # core integrations only; tests/test_repo_metadata.py checks its structure here.
 # The manifest declares no quality_scale: bronze needs every rule done or exempt.
+# The statuses describe the code and the documentation as they were when this
+# file was written; a change that alters a rule updates it (AGENTS.md).
 rules:
   # Bronze
   action-setup:
@@ -19,7 +21,8 @@ rules:
     comment: >-
       No brand/ directory yet. Since Home Assistant 2026.3 a custom integration
       ships its images in custom_components/biomatx/brand/, at least icon.png
-      (256x256). The HACS brands check is ignored in validate.yml until then.
+      (256x256 in the home-assistant/brands README). The HACS brands check is
+      ignored in validate.yml until then.
   common-modules:
     status: done
     comment: >-
@@ -36,8 +39,9 @@ rules:
     status: todo
     comment: >-
       data_description is set on every field. The module count and the optional
-      all-off scenario are stored in the entry data, not in its options, to be
-      settled in the config flow pull request (1.0.0-beta.3).
+      all-off scenario are stored in the entry data, not in its options. The
+      entry keys are part of the public API that 1.0.0 fixes, so this has to be
+      decided before then.
   dependency-transparency:
     status: done
     comment: >-

@@ -170,3 +170,14 @@ def test_release_workflow_runs_only_on_version_tags() -> None:
     assert workflow[True] == {"push": {"tags": ["v*"]}}  # YAML 1.1 reads ``on`` as True
     assert workflow["permissions"] == {}
     assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
+
+
+def test_release_workflow_passes_the_tag_through_the_environment() -> None:
+    """A tag name is user input: no expression may be expanded inside a script."""
+    text = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+    steps = yaml.safe_load(text)["jobs"]["release"]["steps"]
+    scripts = [step["run"] for step in steps if "run" in step]
+    assert scripts
+    assert not [script for script in scripts if "${{" in script]

@@ -134,15 +134,19 @@ mergeable only when all of them are green.
 ## Release procedure
 
 1. Release PR: turn the `[Unreleased]` entries of `CHANGELOG.md` into a dated
-   `## [X.Y.Z] - YYYY-MM-DD` section and set `manifest.json` `version`.
-   `python scripts/release_notes.py vX.Y.Z` prints the notes the release will
-   carry and fails on a mismatch: run it before tagging.
+   `## [X.Y.Z] - YYYY-MM-DD` section, update the compare links at the end of the
+   file, and set `manifest.json` `version`. `python scripts/release_notes.py
+   vX.Y.Z` prints the notes the release will carry and fails on a mismatch: run
+   it before tagging.
 2. Tag `vX.Y.Z` on `main` and push the tag. Do not create the release by hand:
    `release.yml` runs `scripts/release_notes.py`, which fails the workflow
    unless the manifest version equals the tag without the `v` and `CHANGELOG.md`
    has a `## [X.Y.Z]` section, then publishes the GitHub Release with that
    section as notes (pre-release when the tag contains `-`).
 3. HACS picks up GitHub Releases only (bare tags are ignored).
+
+If the workflow fails, nothing was published: fix the cause in a pull request,
+delete the tag locally and on `origin`, and tag the new `main` commit.
 
 ## Roadmap
 
