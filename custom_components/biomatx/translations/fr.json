@@ -26,7 +26,7 @@
       },
       "reconfigure": {
         "title": "Reconfigurer le bus BioMatX",
-        "description": "Modifier le périphérique série, ou le conserver pour revoir les modules et le scénario «\u00a0tout éteint\u00a0» sur la page suivante. Un périphérique déjà lu par l'intégration en service n'est pas rouvert une seconde fois\u00a0: les modules que cette intégration a entendus sont affichés à la place. Les entités gardent leurs identifiants.",
+        "description": "Modifier le périphérique série, ou le conserver pour revoir les modules et le scénario «\u00a0tout éteint\u00a0» sur la page suivante. Un périphérique déjà lu par l'intégration en service n'est pas rouvert une seconde fois\u00a0: les modules que cette intégration a entendus sont affichés à la place. Pour corriger un protocole erroné, désactivez l'entrée, reconfigurez-la puis réactivez-la\u00a0: le bus d'une entrée désactivée est écouté. Les entités gardent leurs identifiants.",
         "data": {
           "device": "Périphérique série"
         },

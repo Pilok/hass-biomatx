@@ -9,6 +9,7 @@ from unittest.mock import patch
 from homeassistant.config_entries import (
     SOURCE_RECONFIGURE,
     SOURCE_USER,
+    ConfigEntryDisabler,
     ConfigEntryState,
 )
 from homeassistant.const import CONF_DEVICE
@@ -24,6 +25,7 @@ from custom_components.biomatx.const import (
     CONF_PROTOCOL,
     DOMAIN,
 )
+from custom_components.biomatx.protocol import Protocol
 from custom_components.biomatx.protocol.master import xor_checksum
 
 from . import frames_master as fm
@@ -209,29 +211,29 @@ async def test_user_flow_keeps_listening_for_the_whole_window(
     assert result["description_placeholders"]["modules"] == "1, 4"
 
 
-async def test_user_flow_hears_a_slow_module_whose_report_is_lost(
+async def test_user_flow_hears_a_slow_module_whose_first_report_is_lost(
     hass: HomeAssistant, fake_serial: FakeSerialLink, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """
-    A module reporting every 4 s is heard although one of its reports is lost.
+    A module reporting every 4 s is heard although its first report is lost.
 
     The slowest module of the Enersol hall capture reports every 3.95 to 4.14 s, so
-    a window of one period holds one report and a collision can hide it. The window
-    as shipped is replayed at a twentieth of its length, against a period scaled
-    the same way: the first report (at 0.1 s) is damaged and the next one, one
-    period later, is valid. Two periods hear it; one period would not.
+    a window of one period can hold a single report, and a collision hides it. The
+    window as shipped is replayed at a twentieth of its length against a period
+    scaled the same way: the first report is damaged as the port opens, the next
+    one, a period later, is valid, and the window leaves it a whole period of
+    margin (0.2 s).
     """
     scale = 20
     monkeypatch.setattr(config_flow, "PROBE_SECONDS", REAL_PROBE_SECONDS / scale)
+    fake_serial.preload(fm.STATE_M1_BAD_CHECKSUM)  # lost to a collision
 
-    async def reports() -> None:
-        await asyncio.sleep(0.1)
-        fake_serial.feed(fm.STATE_M1_BAD_CHECKSUM)  # lost to a collision
+    async def next_report() -> None:
         await asyncio.sleep(SLOWEST_REPORT_PERIOD / scale)
         fake_serial.feed(fm.STATE_HOUSE_M1)
 
     result = await start_user_flow(hass)
-    later = asyncio.create_task(reports())
+    later = asyncio.create_task(next_report())
     result = await configure(hass, result, {CONF_DEVICE: URL})
     await later
     assert result["description_placeholders"]["modules"] == "1"
@@ -509,10 +511,10 @@ async def test_reconfigure_silent_bus_keeps_a_stored_master_protocol(
     }
 
 
-async def test_reconfigure_silent_bus_drops_a_stored_legacy_protocol(
+async def test_reconfigure_silent_bus_keeps_a_stored_legacy_protocol(
     hass: HomeAssistant, fake_serial: FakeSerialLink, mock_config_entry: MockConfigEntry
 ) -> None:
-    """The flow never stores legacy: the next load detects the protocol again."""
+    """Nothing proves another protocol: the entry keeps the one it holds."""
     mock_config_entry.add_to_hass(hass)
     result = await reconfigure_to_modules(hass, mock_config_entry)
     assert result["description_placeholders"] == {"protocol": "legacy", "modules": "-"}
@@ -524,20 +526,34 @@ async def test_reconfigure_silent_bus_drops_a_stored_legacy_protocol(
         CONF_DEVICE: URL,
         CONF_MODULE_COUNT: 4,
         CONF_ALL_OFF_ADDRESS: 5,
+        CONF_PROTOCOL: "legacy",
     }
 
 
-async def test_reconfigure_hearing_another_protocol_replaces_the_stored_one(
-    hass: HomeAssistant, fake_serial: FakeSerialLink, mock_config_entry: MockConfigEntry
+async def test_reconfigure_of_a_disabled_entry_held_wrongly_in_legacy_stores_master(
+    hass: HomeAssistant, fake_serial: FakeSerialLink
 ) -> None:
-    """Modules reprogrammed from legacy to master: the listen corrects the entry."""
-    mock_config_entry.add_to_hass(hass)
+    """
+    The way out of a false legacy: disable the entry, then reconfigure it.
+
+    A review keeps the protocol the hub of a loaded entry works with, legacy
+    included. A disabled entry is not loaded: the flow listens, and the bus
+    decodes as master.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=URL,
+        version=3,
+        disabled_by=ConfigEntryDisabler.USER,
+        data={CONF_DEVICE: URL, CONF_MODULE_COUNT: 4, CONF_PROTOCOL: "legacy"},
+    )
+    entry.add_to_hass(hass)
     fake_serial.preload(HOUSE_REPORTS)
-    result = await reconfigure_to_modules(hass, mock_config_entry)
+    result = await reconfigure_to_modules(hass, entry)
     assert result["description_placeholders"]["protocol"] == "master"
     result = await configure(hass, result, {CONF_MODULE_COUNT: 4})
     assert result["type"] is FlowResultType.ABORT
-    assert mock_config_entry.data[CONF_PROTOCOL] == "master"
+    assert entry.data[CONF_PROTOCOL] == "master"
 
 
 async def test_reconfigure_updates_data_and_reloads(
@@ -555,6 +571,7 @@ async def test_reconfigure_updates_data_and_reloads(
         CONF_DEVICE: URL,
         CONF_MODULE_COUNT: 3,
         CONF_ALL_OFF_ADDRESS: 1,
+        CONF_PROTOCOL: "legacy",
     }
     assert mock_config_entry.unique_id == URL
 
@@ -729,14 +746,20 @@ async def test_reconfigure_loaded_entry_proposes_a_module_its_hub_drops_as_uncon
     assert result["description_placeholders"]["modules"] == "1, 2, 3, 4, 5"
 
 
-async def test_reconfigure_loaded_entry_with_a_legacy_hub_drops_the_protocol_key(
+async def test_reconfigure_review_of_a_loaded_legacy_entry_keeps_the_key_and_the_hub(
     hass: HomeAssistant,
     setup_integration: SetupIntegration,
     mock_config_entry: MockConfigEntry,
     fake_serial: FakeSerialLink,
 ) -> None:
-    """The flow stores master only: the entry reloads and detects its bus again."""
+    """
+    A legacy hub keeps its protocol: dropping the key would reload the entry.
+
+    The reloaded hub would have no codec until the next button press, and the
+    first command would fail.
+    """
     entry = await setup_integration(mock_config_entry)  # stored protocol: legacy
+    hub = entry.runtime_data.hub
     result = await reconfigure_to_modules(hass, entry)
     assert result["description_placeholders"]["protocol"] == "legacy"
     result = await configure(
@@ -744,9 +767,31 @@ async def test_reconfigure_loaded_entry_with_a_legacy_hub_drops_the_protocol_key
     )
     assert result["type"] is FlowResultType.ABORT
     await hass.async_block_till_done()
-    assert CONF_PROTOCOL not in entry.data
-    assert entry.data[CONF_ALL_OFF_ADDRESS] == 5
-    assert len(fake_serial.opens) == 2  # the dropped key is a change: one reload
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.data[CONF_PROTOCOL] == "legacy"
+    assert entry.runtime_data.hub is hub
+    assert hub.protocol is Protocol.LEGACY
+    assert len(fake_serial.opens) == 1
+
+
+async def test_reconfigure_change_of_a_loaded_legacy_entry_reloads_it_with_its_key(
+    hass: HomeAssistant,
+    setup_integration: SetupIntegration,
+    mock_config_entry: MockConfigEntry,
+    fake_serial: FakeSerialLink,
+) -> None:
+    """A change reloads the entry, and the new hub still has its protocol."""
+    entry = await setup_integration(mock_config_entry)
+    result = await reconfigure_to_modules(hass, entry)
+    result = await configure(
+        hass, result, {CONF_MODULE_COUNT: 3, CONF_ALL_OFF_SCENARIO: 6}
+    )
+    assert result["type"] is FlowResultType.ABORT
+    await hass.async_block_till_done()
+    assert entry.data[CONF_PROTOCOL] == "legacy"
+    assert entry.data[CONF_MODULE_COUNT] == 3
+    assert len(fake_serial.opens) == 2
+    assert entry.runtime_data.hub.protocol is Protocol.LEGACY
 
 
 async def test_reconfigure_loaded_entry_takes_the_protocol_the_hub_detected(
@@ -767,7 +812,8 @@ async def test_reconfigure_loaded_entry_takes_the_protocol_the_hub_detected(
     result = await configure(hass, result, {CONF_MODULE_COUNT: 4})
     assert result["type"] is FlowResultType.ABORT
     await hass.async_block_till_done()
-    assert CONF_PROTOCOL not in entry.data
+    assert entry.data[CONF_PROTOCOL] == "legacy"
+    assert len(fake_serial.opens) == 1  # nothing changed: no reload
 
 
 async def test_reconfigure_loaded_entry_moved_to_a_new_device_listens_to_it(

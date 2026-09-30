@@ -22,15 +22,15 @@ the project uses [Semantic Versioning](https://semver.org/).
   capture (3.95 to 4.14 s). Over the 280 intervals of that capture, 4 s would
   have missed that module at about 5 % of the positions with 5 % of the reports
   lost, 8 s at 0.3 %.
-- The listen runs a `BiomatxHub` built for every module address (a hub built for
-  the configured count would drop the reports of the others) that decodes the
-  bus as master. Only a decoded master frame proves that protocol: letting the
-  hub detect would settle on the first read, where the detectors' phantom frame
-  alone reads as a legacy press and hides the reports that follow.
-- The config entry stores `protocol: master` when the listen proved it. The flow
-  never stores `legacy`, a verdict that one stray frame can produce and that
-  would freeze a master entry, and the key is absent after a silent listen: the
-  detection at the first load takes over, as in beta.2.
+- The listen runs a `BiomatxHub` that follows no module (`heard_modules()`
+  remembers every report it hears) and decodes the bus as master. Only a decoded
+  master frame proves that protocol: letting the hub detect would settle on the
+  first read, where the detectors' phantom frame alone reads as a legacy press
+  and hides the reports that follow.
+- The config entry stores `protocol: master` when the listen proved it. The
+  listen never stores `legacy`, a verdict that one stray frame can produce, and
+  the key is absent after a silent listen: the detection at the first load takes
+  over, as in beta.2.
 - `BiomatxHub.heard_modules()` returns the addresses of the modules that
   reported since the link came up, the ones the hub drops as unconfigured
   included.
@@ -39,10 +39,14 @@ the project uses [Semantic Versioning](https://semver.org/).
   protocol and the modules heard, a module added to the bus after the entry was
   set up included, and the proposed count is the larger of the configured count
   and the highest address heard plus one. Otherwise the flow listens, and a new
-  device is proposed what it hears, whatever the entry held. The stored protocol
-  follows what is heard: replaced when the bus proves another one, kept when it
-  is `master` and the entry's own device is silent, dropped when the device
-  changes and the new bus is silent, and dropped when it is `legacy`.
+  device is proposed what it hears, whatever the entry held. The protocol
+  follows what is known: a loaded entry keeps the one its hub works with, legacy
+  included, because dropping the key would reload the entry and leave the hub
+  without a codec until the next button press; after a listen, a proved `master`
+  replaces the stored protocol, a silent bus keeps it on the entry's own device
+  and drops it on a new device. A false `legacy` is therefore not healed by a
+  review: disable the entry, reconfigure it, then enable it again, and the
+  listen decodes `master`. The `reconfigure` step says so.
 
 ### Changed
 

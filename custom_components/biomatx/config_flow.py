@@ -91,16 +91,17 @@ async def _async_probe(hass: HomeAssistant, device: str) -> BusSurvey | None:
     """
     Listen to the bus for ``PROBE_SECONDS`` and return what it said.
 
-    Read only: a hub writes nothing when it connects or decodes. The hub is built
-    for every module address, or the reports of modules beyond the count of the
-    entry would be dropped as unconfigured. It decodes the bus as master: only a
-    decoded master frame proves that protocol, and the flow stores nothing else.
-    Letting the hub detect would settle on the first read, where the detectors'
-    phantom frame alone reads as a legacy press and hides the reports that
-    follow. The modules are read before the hub is closed, which forgets them.
-    Returns ``None`` when the device cannot be opened.
+    Read only: a hub writes nothing when it connects or decodes. The hub follows
+    no module: every state report it hears is one of an unconfigured module,
+    which ``heard_modules()`` remembers, and no per-module state or timer is kept
+    for a listen of a few seconds. It decodes the bus as master: only a decoded
+    master frame proves that protocol, and the probe says nothing else. Letting
+    the hub detect would settle on the first read, where the detectors' phantom
+    frame alone reads as a legacy press and hides the reports that follow. The
+    modules are read before the hub is closed, which forgets them. Returns
+    ``None`` when the device cannot be opened.
     """
-    hub = BiomatxHub(device, MAX_MODULES, None, protocol=Protocol.MASTER)
+    hub = BiomatxHub(device, 0, None, protocol=Protocol.MASTER)
     try:
         await hub.async_connect()
     except BiomatxConnectionError:
@@ -124,8 +125,8 @@ async def _async_survey_entry(
     and a second reader would take a share of the bytes. The hub's protocol and
     the modules it heard, configured or not, are read instead. Any other device
     is listened to. A silent listen on the entry's own device keeps its stored
-    protocol, which the modules step then shows; on another device the stored
-    protocol says nothing and is dropped.
+    protocol, which the modules step then shows; one that proves master replaces
+    it; on another device the stored protocol says nothing and is dropped.
     """
     if device != entry.data[CONF_DEVICE]:
         return await _async_probe(hass, device)
@@ -183,10 +184,13 @@ def _entry_data(
     """
     Turn the form values into entry data: integers, scenario stored 0-based.
 
-    Only ``master`` is stored. A decoded master frame proves it, whereas a legacy
-    verdict can come from one stray frame (the detectors' phantom frame alone
-    reads as a legacy press) and would freeze a master entry. Without the key, the
-    detection at the first load decides.
+    The protocol is written as it comes. The listen only proves ``master`` or
+    says nothing, so the flow never creates a ``legacy`` key: a legacy verdict can
+    come from one stray frame (the detectors' phantom frame alone reads as a
+    legacy press). The protocol of the hub of a loaded entry is kept as it is,
+    legacy included: dropping it would reload the entry and leave its hub without
+    a codec until the next button press. Without a key, the detection at the first
+    load decides.
     """
     data: dict[str, Any] = {
         CONF_DEVICE: device,
@@ -194,7 +198,7 @@ def _entry_data(
     }
     if (scenario := user_input.get(CONF_ALL_OFF_SCENARIO)) is not None:
         data[CONF_ALL_OFF_ADDRESS] = int(scenario) - 1
-    if protocol is Protocol.MASTER:
+    if protocol is not None:
         data[CONF_PROTOCOL] = protocol.value
     return data
 
