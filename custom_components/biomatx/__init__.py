@@ -31,6 +31,8 @@ from .hub import BiomatxConnectionError, BiomatxHub
 from .protocol import InvalidFrame, Protocol
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.typing import ConfigType
 
@@ -38,7 +40,8 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.EVENT, Platform.LIGHT]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
-CURRENT_ENTRY_VERSION = 2
+CURRENT_ENTRY_VERSION = 3
+"""Version the config flow writes and the last migration step ends on."""
 
 
 @dataclass(slots=True)
@@ -136,25 +139,57 @@ async def async_unload_entry(hass: HomeAssistant, entry: BiomatxConfigEntry) -> 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """
-    Bring a config entry written by an older release up to date.
+    Bring a config entry written by an older release up to date, one version at a time.
 
-    Home Assistant refuses entries newer than CURRENT_ENTRY_VERSION by itself.
+    ``_MIGRATIONS[n]`` takes an entry from version ``n`` to ``n + 1``. Home
+    Assistant refuses entries newer than CURRENT_ENTRY_VERSION by itself.
     """
-    if entry.version == 1:
-        data = {
-            key: value for key, value in entry.data.items() if key != CONF_SERIAL_WAIT
-        }
-        await _async_migrate_legacy_registries(hass, entry)
-        hass.config_entries.async_update_entry(
-            entry,
-            data=data,
-            version=CURRENT_ENTRY_VERSION,
-            unique_id=entry.unique_id or data[CONF_DEVICE],
-        )
-        _LOGGER.info(
-            "Migrated config entry %s to version %s", entry.title, entry.version
-        )
+    for version in range(entry.version, CURRENT_ENTRY_VERSION):
+        await _MIGRATIONS[version](hass, entry)
     return True
+
+
+async def _async_migrate_to_version_2(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Drop the inert ``serial_wait``, set the unique id, keep the entity ids."""
+    data = {key: value for key, value in entry.data.items() if key != CONF_SERIAL_WAIT}
+    await _async_migrate_legacy_registries(hass, entry)
+    hass.config_entries.async_update_entry(
+        entry,
+        data=data,
+        version=2,
+        unique_id=entry.unique_id or data[CONF_DEVICE],
+    )
+    _LOGGER.info("Migrated config entry %s to version %s", entry.title, entry.version)
+
+
+async def _async_migrate_to_version_3(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """
+    Remove the ``binary_sensor`` entries of the entry from the entity registry.
+
+    The upstream integration made one per button. Buttons are ``event`` entities
+    now, with the same unique ids, and a registry entry is keyed by domain as
+    well: the old ones stay behind, unavailable for good. The entry's data is
+    left as it is.
+    """
+    registry = er.async_get(hass)
+    for entity_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if (
+            entity_entry.domain == Platform.BINARY_SENSOR
+            and entity_entry.platform == DOMAIN
+        ):
+            _LOGGER.info(
+                "Removing %s: the integration has no binary_sensor platform any more",
+                entity_entry.entity_id,
+            )
+            registry.async_remove(entity_entry.entity_id)
+    hass.config_entries.async_update_entry(entry, version=3)
+    _LOGGER.info("Migrated config entry %s to version %s", entry.title, entry.version)
+
+
+_MIGRATIONS: dict[int, Callable[[HomeAssistant, ConfigEntry], Awaitable[None]]] = {
+    1: _async_migrate_to_version_2,
+    2: _async_migrate_to_version_3,
+}
 
 
 LEGACY_UNIQUE_ID = re.compile(r"^(?P<module>[0-7])_(?P<switch>[0-9])$")

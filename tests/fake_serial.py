@@ -72,6 +72,8 @@ class FakeSerialLink:
         """Raise OSError on the write with this 0-based sequence number."""
         self.hold_open: asyncio.Event | None = None
         """When set, every open waits for this event before completing."""
+        self.preloaded = bytearray()
+        """Bytes every new connection delivers to its reader as soon as it opens."""
         self.reader: asyncio.StreamReader | None = None
         self.writer: FakeStreamWriter | None = None
 
@@ -88,6 +90,7 @@ class FakeSerialLink:
             exc, self.fail_open = self.fail_open, None
             raise exc
         self.reader = asyncio.StreamReader()
+        self.reader.feed_data(bytes(self.preloaded))
         self.writer = FakeStreamWriter(self, self.reader)
         return self.reader, self.writer
 
@@ -96,6 +99,15 @@ class FakeSerialLink:
     ) -> tuple[asyncio.StreamReader, FakeStreamWriter]:
         """Mimic ``asyncio.open_connection`` for ``socket://`` gateways."""
         return await self.open_serial_connection(url=f"socket://{host}:{port}")
+
+    def preload(self, hex_frames: str) -> None:
+        """
+        Make the bus say ``hex_frames`` to every connection as soon as it opens.
+
+        For code that opens the link and listens within one call, such as the
+        config flow's probe, where a test cannot ``feed`` between the two.
+        """
+        self.preloaded += bytes.fromhex(hex_frames)
 
     def feed(self, hex_frames: str) -> None:
         """Make bytes arrive on the bus, e.g. ``feed("50 00 50 80")``."""

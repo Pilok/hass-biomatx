@@ -6,8 +6,78 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Bus discovery in the config flow (decision D17 of the plan). Once the serial
+  device is entered and found neither configured nor being configured, the flow
+  listens to the bus for `PROBE_SECONDS` (8 s) and never writes a byte. A second
+  step, `modules`, lists the protocol and the modules heard (numbered from 1),
+  proposes the highest module address heard plus one, capped at 7 (never the
+  number of addresses heard: a report missed during the listen must not make the
+  count short), and asks for the optional "all off" scenario as before. A silent
+  bus gives no proposal and the count is entered by hand, as it is with legacy
+  modules, which only transmit when a button is pressed and never report. A
+  device that cannot be opened keeps the first step up with `cannot_connect`.
+- The window holds two report periods of the slowest module of the Enersol hall
+  capture (3.95 to 4.14 s). Over the 280 intervals of that capture, 4 s would
+  have missed that module at about 5 % of the positions with 5 % of the reports
+  lost, 8 s at 0.3 %.
+- The listen runs a `BiomatxHub` that follows no module (`heard_modules()`
+  remembers every report it hears) and decodes the bus as master. Only a decoded
+  master frame proves that protocol: letting the hub detect would settle on the
+  first read, where the detectors' phantom frame alone reads as a legacy press
+  and hides the reports that follow.
+- The config entry stores `protocol: master` when the listen proved it. The
+  listen never stores `legacy`, a verdict that one stray frame can produce, and
+  the key is absent after a silent listen: the detection at the first load takes
+  over, as in beta.2.
+- `BiomatxHub.heard_modules()` returns the addresses of the modules that
+  reported since the link came up, the ones the hub drops as unconfigured
+  included.
+- Reconfiguration goes through the same two steps. A loaded entry whose device
+  is unchanged is not listened to (see Fixed): its running hub gives the
+  protocol and the modules heard, a module added to the bus after the entry was
+  set up included, and the proposed count is the larger of the configured count
+  and the highest address heard plus one. Otherwise the flow listens, and a new
+  device is proposed what it hears, whatever the entry held. The protocol
+  follows what is known: a loaded entry keeps the one its hub works with, legacy
+  included, because dropping the key would reload the entry and leave the hub
+  without a codec until the next button press; after a listen, a proved `master`
+  replaces the stored protocol, a silent bus keeps it on the entry's own device
+  and drops it on a new device. A `legacy` stored wrongly is therefore not
+  healed by a review. The case is rare: the listen proves a master bus when the
+  entry is created, so only an entry created before this release, or after a
+  silent listen, can hold one.
+
+### Changed
+
+- Config entries are at **version 3**. The migration now runs one version at a
+  time: 1 to 2 as before, then 2 to 3, which leaves the data of the entry
+  untouched. Entries at version 2 migrate on the first start of this release.
+- The first step of the config flow takes the serial device only; the module
+  count and the scenario moved to the second step, for reconfiguration as well.
+  `translations/en.json` and `fr.json` carry the new `modules` step, the
+  reworded `user` and `reconfigure` steps and the `already_in_progress` abort.
+- Reconfiguration reloads the entry only when it changed something. A review
+  that changes nothing no longer switches the lights off for the time of a
+  reload.
+
+### Removed
+
+- The `binary_sensor` entries of the upstream integration. Since beta.2 the
+  buttons are `event` entities with the same unique ids, and Home Assistant
+  keeps a registry entry per domain, so the old entries stayed behind,
+  unavailable for good. The 2 to 3 migration removes them from the entity
+  registry, for the config entry being migrated only; its `light` and `event`
+  entries are kept.
+
 ### Fixed
 
+- Reconfiguring a bus in service no longer opens the serial device a second
+  time. The previous step tested the device it was given even when the running
+  hub was already reading it: `serialx` opens USB serial devices with exclusive
+  access, so the second open may be refused, and on an Ethernet gateway two
+  readers would share the bytes of the bus.
 - `manifest.json` requires `serialx>=1.10.0,<2` instead of pinning `1.10.0`.
   Home Assistant 2026.9 constrains `serialx` to 1.10.0 and 2026.10 to 1.11.0, so
   a pin on either fails on the other core: hassfest, which runs against the

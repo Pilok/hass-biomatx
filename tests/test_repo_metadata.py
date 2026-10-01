@@ -135,6 +135,72 @@ def test_translation_files_have_identical_key_sets() -> None:
     assert _leaf_keys(english) == _leaf_keys(french)
 
 
+PLACEHOLDER = re.compile(r"{(\w+)}")
+
+
+def _translation_strings(language: str) -> dict[str, str]:
+    """Return every string of one translation file, keyed by its dotted path."""
+    tree = json.loads(
+        (INTEGRATION_DIR / "translations" / f"{language}.json").read_text()
+    )
+
+    def flatten(node: object, prefix: str) -> dict[str, str]:
+        if isinstance(node, dict):
+            flat: dict[str, str] = {}
+            for key, value in node.items():
+                flat |= flatten(value, f"{prefix}.{key}")
+            return flat
+        return {prefix: str(node)}
+
+    return flatten(tree, "")
+
+
+def test_translation_placeholders_match_between_languages() -> None:
+    """A placeholder missing from fr.json shows up as raw braces or as nothing."""
+    english = _translation_strings("en")
+    french = _translation_strings("fr")
+    for key, text in english.items():
+        expected = set(PLACEHOLDER.findall(text))
+        assert set(PLACEHOLDER.findall(french.get(key, ""))) == expected, key
+
+
+@pytest.mark.parametrize("language", ["en", "fr"])
+def test_translation_strings_have_no_surrounding_whitespace(language: str) -> None:
+    """Hassfest refuses a translation string that starts or ends with whitespace."""
+    for key, text in _translation_strings(language).items():
+        assert text == text.strip(), key
+
+
+@pytest.mark.parametrize("language", ["en", "fr"])
+def test_config_flow_steps_use_the_placeholders_the_flow_provides(
+    language: str,
+) -> None:
+    """The user step names the listen, the modules step what was heard."""
+    strings = _translation_strings(language)
+    user = strings[".config.step.user.description"]
+    modules = strings[".config.step.modules.description"]
+    assert set(PLACEHOLDER.findall(user)) == {"seconds"}
+    assert set(PLACEHOLDER.findall(modules)) == {"protocol", "modules"}
+
+
+@pytest.mark.parametrize("language", ["en", "fr"])
+def test_every_abort_reason_the_config_flow_can_raise_is_translated(
+    language: str,
+) -> None:
+    """Home Assistant raises ``already_in_progress`` itself when two flows meet."""
+    prefix = ".config.abort."
+    reasons = {
+        key.removeprefix(prefix)
+        for key in _translation_strings(language)
+        if key.startswith(prefix)
+    }
+    assert {
+        "already_configured",
+        "already_in_progress",
+        "reconfigure_successful",
+    } <= reasons
+
+
 def test_no_strings_json_in_custom_integration() -> None:
     """Home Assistant forbids strings.json for custom integrations."""
     assert not (INTEGRATION_DIR / "strings.json").exists()

@@ -214,6 +214,7 @@ class BiomatxHub:
         self._bytes_discarded = 0
         self._noise_run = 0
         self._last_seen: dict[int, float] = {}
+        self._unconfigured_heard: set[int] = set()
         self._module_up: dict[int, bool] = {}
         self._module_timers: dict[int, asyncio.TimerHandle] = {}
         self._confirmations: list[
@@ -308,6 +309,17 @@ class BiomatxHub:
     def module_last_seen(self, address: int) -> float | None:
         """Return the monotonic time of the last state report of a module."""
         return self._last_seen.get(address)
+
+    def heard_modules(self) -> frozenset[int]:
+        """
+        Return the addresses of the modules that reported since the link came up.
+
+        The configured modules, and the ones the hub drops as unconfigured: their
+        reports are not applied to anything, but they prove that the module is on
+        the bus. The config flow uses them to propose a module added after the
+        entry was set up. The scenario module never reports.
+        """
+        return frozenset(self._last_seen) | self._unconfigured_heard
 
     def _is_known_module(self, address: int) -> bool:
         return address < self.module_count or address == SCENARIO_MODULE_ADDRESS
@@ -497,12 +509,13 @@ class BiomatxHub:
         self._set_connected(connected=False)
 
     def _forget_modules(self) -> None:
-        """Forget the modules' availability; a fresh report earns it again."""
+        """Forget the modules heard and their availability; a report earns it again."""
         for timer in self._module_timers.values():
             timer.cancel()
         self._module_timers.clear()
         self._module_up.clear()
         self._last_seen.clear()
+        self._unconfigured_heard.clear()
 
     # --- receiving --------------------------------------------------------------
 
@@ -666,6 +679,7 @@ class BiomatxHub:
     def _handle_state(self, frame: StateFrame) -> None:
         if frame.module >= self.module_count:
             self._frames_rejected += 1
+            self._unconfigured_heard.add(frame.module)
             _LOGGER.debug(
                 "dropping state report of unconfigured module %d", frame.module
             )

@@ -4,30 +4,34 @@
     "step": {
       "user": {
         "title": "Connexion au bus BioMatX",
-        "description": "Le réseau intermodule RS485 est lu par un adaptateur série. Indiquez le périphérique série de l'adaptateur (ou une URL pyserial comme socket://hote:port pour une passerelle Ethernet), le nombre de modules BioMatX et, si elle existe, le scénario qui éteint tous les relais.",
+        "description": "Le réseau intermodule RS485 est lu par un adaptateur série. Indiquez le périphérique série de l'adaptateur, ou une URL pyserial comme socket://hote:port pour une passerelle Ethernet. BioMatX écoute ensuite le bus pendant {seconds} secondes, sans rien envoyer, pour reconnaître le firmware et les modules.",
         "data": {
-          "device": "Périphérique série",
+          "device": "Périphérique série"
+        },
+        "data_description": {
+          "device": "Chemin du type /dev/serial/by-id/usb-FTDI_..., ou URL pyserial."
+        }
+      },
+      "modules": {
+        "title": "Modules sur le bus",
+        "description": "Ce que BioMatX a entendu sur le bus, sans rien envoyer\u00a0:\n\n- Protocole du firmware\u00a0: {protocol}\n- Modules entendus\u00a0: {modules}\n\nLe nombre de modules est prérempli avec la plus haute adresse de module entendue. Corrigez-le si un module est resté muet, ou saisissez-le à la main quand rien n'a été entendu\u00a0: les modules du firmware legacy n'émettent que lorsqu'on appuie sur un bouton.",
+        "data": {
           "module_count": "Nombre de modules",
           "all_off_scenario": "Scénario « tout éteint »"
         },
         "data_description": {
-          "device": "Chemin du type /dev/serial/by-id/usb-FTDI_..., ou URL pyserial.",
           "module_count": "Modules sur le bus, de 1 à 7, adressés de 1 à 7 en face avant.",
           "all_off_scenario": "Numéro (1 à 10) du scénario programmé sur chaque module pour éteindre tous les relais. Laisser vide s'il n'existe pas."
         }
       },
       "reconfigure": {
         "title": "Reconfigurer le bus BioMatX",
-        "description": "Modifier le périphérique série, le nombre de modules ou le scénario « tout éteint ». Les entités gardent leurs identifiants.",
+        "description": "Modifier le périphérique série, ou le conserver pour revoir les modules et le scénario «\u00a0tout éteint\u00a0» sur la page suivante. Un périphérique déjà lu par l'intégration en service n'est pas rouvert une seconde fois\u00a0: les modules que cette intégration a entendus sont affichés à la place. Les entités gardent leurs identifiants.",
         "data": {
-          "device": "Périphérique série",
-          "module_count": "Nombre de modules",
-          "all_off_scenario": "Scénario « tout éteint »"
+          "device": "Périphérique série"
         },
         "data_description": {
-          "device": "Chemin du type /dev/serial/by-id/usb-FTDI_..., ou URL pyserial.",
-          "module_count": "Modules sur le bus, de 1 à 7.",
-          "all_off_scenario": "Numéro (1 à 10) du scénario qui éteint tous les relais. Laisser vide s'il n'existe pas."
+          "device": "Chemin du type /dev/serial/by-id/usb-FTDI_..., ou URL pyserial."
         }
       }
     },
@@ -36,6 +40,7 @@
     },
     "abort": {
       "already_configured": "Ce périphérique série est déjà configuré.",
+      "already_in_progress": "La configuration de ce périphérique série est déjà en cours.",
       "reconfigure_successful": "La configuration BioMatX a été mise à jour."
     }
   },

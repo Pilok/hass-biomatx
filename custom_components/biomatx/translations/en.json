@@ -4,30 +4,34 @@
     "step": {
       "user": {
         "title": "Connect to the BioMatX bus",
-        "description": "The RS485 inter-module bus is read through a serial adapter. Enter the serial device of the adapter (or a pyserial URL such as socket://host:port for an Ethernet gateway), the number of BioMatX modules, and optionally the scenario that turns every relay off.",
+        "description": "The RS485 inter-module bus is read through a serial adapter. Enter the serial device of the adapter, or a pyserial URL such as socket://host:port for an Ethernet gateway. BioMatX then listens to the bus for {seconds} seconds, without sending anything, to recognise the firmware and the modules.",
         "data": {
-          "device": "Serial device",
+          "device": "Serial device"
+        },
+        "data_description": {
+          "device": "Path such as /dev/serial/by-id/usb-FTDI_..., or a pyserial URL."
+        }
+      },
+      "modules": {
+        "title": "Modules on the bus",
+        "description": "What BioMatX heard on the bus, without sending anything:\n\n- Firmware protocol: {protocol}\n- Modules heard: {modules}\n\nThe number of modules is pre-filled with the highest module address heard. Correct it if a module stayed silent, or enter it by hand when nothing was heard: legacy modules only transmit when a button is pressed.",
+        "data": {
           "module_count": "Number of modules",
           "all_off_scenario": "\"All off\" scenario"
         },
         "data_description": {
-          "device": "Path such as /dev/serial/by-id/usb-FTDI_..., or a pyserial URL.",
           "module_count": "Modules on the bus, 1 to 7, addressed 1 to 7 on their front panel.",
           "all_off_scenario": "Number (1 to 10) of the scenario programmed on every module to switch all relays off. Leave empty if none exists."
         }
       },
       "reconfigure": {
         "title": "Reconfigure the BioMatX bus",
-        "description": "Change the serial device, the number of modules or the \"all off\" scenario. Entities keep their identifiers.",
+        "description": "Change the serial device, or keep it to review the modules and the \"all off\" scenario on the next page. A device already read by the running integration is not opened a second time: the modules that integration has heard are shown instead. Entities keep their identifiers.",
         "data": {
-          "device": "Serial device",
-          "module_count": "Number of modules",
-          "all_off_scenario": "\"All off\" scenario"
+          "device": "Serial device"
         },
         "data_description": {
-          "device": "Path such as /dev/serial/by-id/usb-FTDI_..., or a pyserial URL.",
-          "module_count": "Modules on the bus, 1 to 7.",
-          "all_off_scenario": "Number (1 to 10) of the scenario that switches all relays off. Leave empty if none exists."
+          "device": "Path such as /dev/serial/by-id/usb-FTDI_..., or a pyserial URL."
         }
       }
     },
@@ -36,6 +40,7 @@
     },
     "abort": {
       "already_configured": "This serial device is already configured.",
+      "already_in_progress": "Configuration of this serial device is already in progress.",
       "reconfigure_successful": "The BioMatX configuration was updated."
     }
   },
