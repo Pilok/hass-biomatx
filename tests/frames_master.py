@@ -29,6 +29,7 @@ STATE_HOUSE_M1 = "a5 18 7f 40 81 01 00 02 00"  # relay 2 on
 STATE_HOUSE_M2 = "a5 5f 7f 41 81 01 00 44 00"  # relays 3 and 7 on
 STATE_HOUSE_M3 = "a5 1e 7f 42 81 01 00 06 00"  # relays 2 and 3 on
 STATE_HOUSE_M4 = "a5 da 7f 43 81 01 00 c0 03"  # relays 7, 8, 9 and 10 on
+STATE_HOUSE_M4_R1_ON = "a5 db 7f 43 81 01 00 c1 03"  # the same plus relay 1 (rebuilt)
 
 # --- event frames -------------------------------------------------------------------
 PRESS_M1_R1 = "a5 e1 00 80 84 40"  # front panel, emitter == target

@@ -2,7 +2,7 @@
 Bus protocols of the BioMatX 2110 modules, without any Home Assistant import.
 
 Two firmwares exist: the original one (``legacy``, two-byte frames, no state
-reports) and the ``master`` one (checksummed frames, state reports every 3 s).
+reports) and the ``master`` one (checksummed frames, periodic state reports).
 A bus runs one of them; ``detect`` tells which from a sample of its traffic.
 """
 
@@ -56,8 +56,8 @@ def detect(data: bytes) -> Protocol | None:
     Only a fully decoded master frame (a state report or an event) is proof:
     an ``InvalidFrame`` is a checksummed window whose fields the format cannot
     carry, which a legacy stream produces by chance about once in 256 windows,
-    so it counts for nothing here; a real master bus reports every 3 s and
-    decides by itself. The price, unchanged from the first release: a sample
+    so it counts for nothing here; a real master bus reports every few seconds
+    and decides by itself. The price, unchanged from the first release: a sample
     holding only such a frame falls through to the legacy codec, which reads
     ``a5 e8`` as a legacy press and answers ``legacy``. Returning ``None``
     instead would stall detection on a legacy bus whose buffer holds one such

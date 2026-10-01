@@ -6,10 +6,17 @@ whole frame is zero. There is no length byte: the type byte (index 4) gives
 the length. Decoded on the Enersol showroom bus and on the owner's bus on
 2026-09-14.
 
-State frame, 9 bytes, broadcast by every module every 3 s and within a second
-of any change (timers included)::
+State frame, 9 bytes, broadcast by every module periodically and within a
+second of any change (timers included)::
 
     a5 <xor> 7f <0x40 | module> 81 01 00 <relays 1-8> <relays 9-10>
+
+The period depends on the 0-based address of the module: about ``3 + address``
+seconds. Measured on the bus captures of 2026-09-14: the owner's four modules
+(addresses 0 to 3) report every 2.991, 3.999, 4.985 and 5.982 s, with intervals
+stable within 0.02 s, and the two modules of the Enersol hall (addresses 0 and
+1) every 2.995 and 3.982 s on average. Addresses 4 to 6 extend the formula
+without a measure; the scenario module (address 7) is virtual and never reports.
 
 Event frame, 6 bytes, emitted on a button press or release and replayable as a
 command (press, then release ~200 ms later)::

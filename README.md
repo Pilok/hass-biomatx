@@ -37,12 +37,12 @@ A bus runs one of two firmwares. The frames tell them apart:
 | | Legacy | Master |
 |---|---|---|
 | Frame | 2 bytes, the first one `5e` or `Ae` where `e` is the emitting module (0 to 7) | starts with `a5`: 6 bytes for a button event, 9 bytes for a state report, XOR checksum |
-| Idle bus | silent until a button is pressed or a detector fires | every module sends a state report every 3 s, and usually within a second of a change |
+| Idle bus | silent until a button is pressed or a detector fires | every module sends a state report every `2 + N` s, where N is its module number (3 s for module 1, 6 s for module 4), and usually within a second of a change |
 | Relay state | never reported | reported by the modules |
 
 To recognise yours, read the bytes of the bus at 19200 8N1 with a serial terminal, while the integration is not set up or is disabled:
 
-- **Master:** within three seconds, 9-byte frames starting with `a5`, one per module every 3 s. For example `a5 1a 7f 40 81 01 00 00 00` is the state report of module 1 with every relay off.
+- **Master:** within a few seconds, 9-byte frames starting with `a5`, one per module at the period of its module number (3 s for module 1, 4 s for module 2, and so on). For example `a5 1a 7f 40 81 01 00 00 00` is the state report of module 1 with every relay off.
 - **Legacy:** nothing until someone presses a button, then 2-byte frames. For example `50 00` is button 1 of module 1 pressed and `50 80` is the same button released.
 
 You do not have to tell the integration. The setup listens to the bus for 8 seconds and records the master firmware when it decodes a master frame. In every other case the integration detects the firmware at its first start, from the first valid frame it reads. A legacy bus is silent until a button is pressed, so the integration refuses commands until it has read that first frame. In Home Assistant, the lights of a legacy bus have separate on and off buttons, because their state is assumed, while the lights of a master bus show their real state.
@@ -55,8 +55,10 @@ What changes for Home Assistant:
 |---|---|---|
 | Light state | inferred from the button presses seen on the bus and from the commands Home Assistant sends; shown as assumed, and restored after a restart | the state the module reports |
 | Command | the state flips as soon as the press is sent; nothing confirms it | sent as a press and a release, then confirmed by the module's report; pressed once more if the relay did not move; an error if it still did not |
-| Timer expiry | invisible | visible within three seconds |
-| Availability | every entity follows the serial link | every entity follows the link, and the lights of a module become unavailable when it is silent for 10 s |
+| Timer expiry | invisible | visible within a second, and at the latest at the module's next periodic report (3 s for module 1, 6 s for module 4) |
+| Availability | every entity follows the serial link | every entity follows the link, and the lights of a module become unavailable when it has missed three of its reports, which is `3 × (2 + N) + 1` s of silence: 10 s for module 1, 19 s for module 4 |
+
+The report periods of modules 1 to 4 were measured on two buses (3, 4, 5 and 6 s). Modules 5 to 7 are assumed to follow the same formula (7, 8 and 9 s).
 
 Nothing is sent on the bus when Home Assistant starts.
 
@@ -146,7 +148,7 @@ Example: the frame `a5 e8 03 80 84 4a` gives `reason` "button out of range", `ta
 
 - **Legacy firmware: the state is assumed.** The modules never report it. A relay in timer mode switches off without any frame on the bus, a frame lost in a collision is not seen, and a change made while Home Assistant is stopped is not seen either, so a light can show the wrong state. If an "all off" scenario is programmed on the modules and declared in the integration settings, every light is marked off in Home Assistant when that scenario is seen on the bus, which realigns the assumed state.
 - **Master firmware: the detectors' "module 4, output 11" frame.** Motion detectors sometimes emit a frame addressed to output 11 of module 4, an output that does not exist. The master firmware executes it as a press on relay 1 of the module it addresses, which is module 4 in the captures this integration was built from. The integration reports the frame, through the event above and a warning, and cannot prevent it. Leave relay 1 of the addressed module free of any load.
-- **Timer relays.** A relay in timer mode switches itself off. On the master firmware the next state report shows it, within three seconds; on the legacy firmware Home Assistant does not see it. Per-relay behaviours (timer, detector, contactor) are not modelled yet: every relay is treated as a latching relay.
+- **Timer relays.** A relay in timer mode switches itself off. On the master firmware the next state report shows it, within a second, and at the latest at the module's next periodic report (3 s for module 1, 6 s for module 4); on the legacy firmware Home Assistant does not see it. Per-relay behaviours (timer, detector, contactor) are not modelled yet: every relay is treated as a latching relay.
 - **No dimming.** The relays are on/off contacts. The lights have no brightness and nothing in the integration dims a light.
 - **One reader per serial port.** See [Hardware](#hardware).
 - **One command at a time.** Commands are sent one by one for the whole bus. On the master firmware each waits for its confirmation, from half a second to a few seconds, so a script that switches many relays takes that long per relay.
@@ -170,9 +172,9 @@ The debug lines show every decoded button frame. They count modules and buttons 
 
 **Page 2 of the setup shows "-" for the firmware and the modules.** Nothing was decoded during the 8 seconds. On a legacy bus this is normal, since it is silent until a button is pressed: enter the number of modules by hand. On a bus that should be master, swap the two wires, check the path and that no other program reads the port, then start the setup again.
 
-**Every entity is unavailable.** The serial link is down. The log says `link to <device> lost (...), reconnecting`. The integration retries by itself after 1, 2, 5, 10 and 30 seconds, then every 60 seconds. On the master firmware the lights come back as each module sends its next report, within three seconds.
+**Every entity is unavailable.** The serial link is down. The log says `link to <device> lost (...), reconnecting`. The integration retries by itself after 1, 2, 5, 10 and 30 seconds, then every 60 seconds. On the master firmware the lights come back as each module sends its next report, within the period of its module number (3 s for module 1, 6 s for module 4).
 
-**The lights of one module are unavailable (master firmware).** The module sent no state report for 10 seconds, and the log says `module N sent no state report for 10 s, marking it unavailable`. Check the module's power and its bus cable. A module can also stay silent for a few seconds after a burst of commands. It comes back by itself at its next report.
+**The lights of one module are unavailable (master firmware).** The module missed three state reports in a row, plus a second of margin: 10 seconds for module 1, 13 for module 2, 16 for module 3 and 19 for module 4 (3 × its report period + 1 s, see the table above). The log says `module N sent no state report for T s, marking it unavailable`, with the seconds of that module. One or two reports lost to a collision on the bus leave the module available. Check the module's power and its bus cable. A module can also stay silent for a few seconds after a burst of commands. It comes back by itself at its next report.
 
 **"BioMatX module N did not confirm the command; check the light."** After two presses the module still reported the old state. Look at the lamp and at the relay's LED. The state shown by Home Assistant is corrected by the module's next report.
 

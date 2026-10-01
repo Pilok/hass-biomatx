@@ -108,6 +108,38 @@ the project uses [Semantic Versioning](https://semver.org/).
   newest core, rejected `1.10.0` from 2026-09-30 on. Nothing changes on Home
   Assistant 2026.9, which keeps the installed 1.10.0. The test workflow now
   runs the suite on `serialx` 1.10.0 and on 1.11.0.
+- A master module is no longer declared unavailable after a single lost report.
+  The hub assumed that every module reports every 3 s and gave all of them 10 s
+  of silence. The bus captures of 2026-09-14 show that the period depends on
+  the 0-based address of the module, `3 + address` s: 2.991, 3.999, 4.985 and
+  5.982 s on the owner's four modules, 2.995 and 3.982 s on the two modules of
+  the Enersol hall. The module of address 3 ("module 4") reports every 6 s, so
+  one report lost to a collision on the bus left 12 s of silence and tripped
+  the timeout. Since 2026-09-21 (older data was purged) the Home Assistant
+  recorder holds 76 `unavailable` episodes of exactly 2.0 s: 74 of module 4
+  (one lost report, back at 12 s) and 2 of module 2 (two lost reports, back at
+  12 s). A module is now unavailable after three of its own reports plus a
+  second, `3 * (3 + address) + 1` s: 10, 13, 16 and 19 s for addresses 0 to 3,
+  so one or two lost reports are absorbed and the module of address 0 keeps the
+  10 s it had. The formula is measured for addresses 0 to 3 and extended to
+  address 6 without a measure; the scenario module (address 7) is virtual and
+  never reports. The grace given to a command on a silent module (one more
+  timeout, counted from its last report) uses the timeout of the module it
+  targets. The warning keeps its form with the timeout of that module in whole
+  seconds: `module N sent no state report for T s, marking it unavailable`.
+- After a command, a module that gave no confirmation within `CONFIRM_TIMEOUT`
+  (3.5 s, unchanged: a module reports within a second of a change) is now
+  awaited for one full report period of its own plus the same 0.5 s margin:
+  3.5 s for address 0 as before, 6.5 s for address 3, instead of 3.5 s for every
+  module. A module whose next periodic report comes later than 7 s after the
+  press (the 3.5 s window plus the 3.5 s wait), and that had reported the relay
+  unmoved inside the window, was declared silent: it is now pressed again once,
+  as the module of address 0 always was.
+- `BiomatxHub` takes `report_period` (the report period of address 0, 3 s by
+  default) in place of `module_timeout`; the step per address and the silence
+  margin scale with it, so a test shortens every period at once. The
+  `MODULE_TIMEOUT` constant gives way to `BiomatxHub.module_timeout(address)`,
+  next to `BiomatxHub.report_period(address)`.
 
 ## [1.0.0-beta.2] - 2026-09-17
 
