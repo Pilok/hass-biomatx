@@ -52,13 +52,12 @@ the project uses [Semantic Versioning](https://semver.org/).
   and the wiring, how to recognise the firmware from the first frame, the
   installation as a HACS custom repository, the devices and entities, the
   `biomatx_invalid_frame` event, the known limits, troubleshooting and removal.
-  The step-by-step setup follows the config flow of #17 (bus discovery): the
-  two pages, the 8 second listen, what is stored, reconfiguration and how to
-  correct a wrong firmware.
+  The step-by-step setup follows the config flow with bus discovery: the two
+  pages, the 8 second listen, what is stored, reconfiguration and what to do
+  about a wrong firmware.
 - `custom_components/biomatx/quality_scale.yaml`: the status of each of the 20
-  bronze rules of the Integration Quality Scale (13 done, 5 exempt, 2 todo:
-  `brands` and `config-flow-test-coverage`), with its structure checked by the
-  repository metadata tests.
+  bronze rules of the Integration Quality Scale (14 done, 5 exempt, 1 todo:
+  `brands`), with its structure checked by the repository metadata tests.
 - `release.yml`: pushing a `v*` tag publishes the GitHub Release with the
   matching `CHANGELOG.md` section as notes, as a pre-release when the tag
   contains `-`. `scripts/release_notes.py` runs first and fails the workflow

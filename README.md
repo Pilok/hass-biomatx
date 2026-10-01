@@ -92,7 +92,7 @@ The integration stores the master firmware in its configuration only when the li
 
 ### Reconfiguring
 
-Open **Settings** > **Devices & services** > **BioMatX**, then the three-dot menu and **Reconfigure**. The same two pages let you change the serial device, the number of modules or the "all off" scenario.
+Open **Settings** > **Devices & services** > **BioMatX**, then the three-dot menu and **Reconfigure**. The same two pages let you change the serial device, the number of modules or the "all off" scenario. The entities keep their identifiers.
 
 - If the integration is running and the device is unchanged, the bus is not listened to again, because the reader of the integration holds the port. Page 2 shows the firmware the integration works with, legacy included, and the modules it has heard since its link came up, a module that joined the bus after the setup among them.
 - For the same device, the page never proposes fewer modules than are configured.
@@ -101,7 +101,7 @@ Open **Settings** > **Devices & services** > **BioMatX**, then the three-dot men
 
 ### Correcting a wrong firmware
 
-On a master bus, the first bytes read at the first start can be a lone "module 4, output 11" frame (see [Known limitations](#known-limitations)), which reads as a legacy frame and stores `legacy`. The lights then show their assumed state, with separate on and off buttons, and do not follow the reports of the modules. A running entry keeps the firmware it works with when it is reconfigured, so a review does not correct it, and the menu of a disabled entry offers no reconfiguration. Remove the integration entry and add it again: the new setup listens to the bus and stores `master`. The devices and entities of the removed entry go with it, and the new ones start without the names, areas and customizations of the old ones.
+A master bus can end up stored as `legacy`. The setup proves a master bus when it creates the entry, so this concerns an entry created by an earlier release, or after a silent listen: the first bytes read at the first start can then be a lone "module 4, output 11" frame (see [Known limitations](#known-limitations)), which reads as a legacy frame. The lights then show their assumed state, with separate on and off buttons, and do not follow the reports of the modules. Reconfiguring a running entry keeps the firmware it works with, so a review does not correct it. As a last resort, remove the integration entry and add it again: the new setup listens to the bus and stores `master`. The devices and entities of the removed entry go with it, and the new ones start without the names, areas and customizations of the old ones.
 
 ## Entities and devices
 
