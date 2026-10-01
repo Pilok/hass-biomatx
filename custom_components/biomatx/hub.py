@@ -9,14 +9,16 @@ dependency so it can be unit tested with an in-memory link.
 Two protocols exist (``protocol/``). On the **legacy** firmware the modules
 never report state: the hub infers it from the presses it sees and sends, and
 a command flips the inferred state as soon as the press frame is written. On
-the **master** firmware every module reports its relays every 3 s and after
-each change: the hub takes state from those reports only, a command waits for
-the report that confirms it (the module's next report decides when none comes
-in time: late confirmation, one more press if the relay did not move, error if
-the module fell silent), and a module silent for ``MODULE_TIMEOUT`` is
-unavailable, with one more ``MODULE_TIMEOUT`` of grace during which a command
-waits for its return instead of being refused. When the protocol is not known
-yet, the hub listens and detects it from the first valid frame.
+the **master** firmware every module reports its relays after each change and
+periodically, every ``3 + address`` s (``report_period``): the hub takes state
+from those reports only, a command waits for the report that confirms it (the
+module's next report decides when none comes in time: late confirmation, one
+more press if the relay did not move, error if the module fell silent), and a
+module that missed three reports in a row, plus a second (``module_timeout``:
+10 s for address 0, 19 s for address 3), is unavailable, with one more
+``module_timeout`` of grace during which a command waits for its return instead
+of being refused. When the protocol is not known yet, the hub listens and
+detects it from the first valid frame.
 
 Transport notes. ``serialx`` (the serial library of Home Assistant core)
 opens USB serial devices with exclusive access and reports write errors
@@ -66,17 +68,34 @@ FRAME_GAP = 0.2
 RECONNECT_DELAYS: tuple[float, ...] = (1, 2, 5, 10, 30, 60)
 """Seconds between reconnection attempts; the last value repeats."""
 STATE_REPORT_PERIOD = 3.0
-"""Seconds between two unsolicited state reports of a master module."""
+"""
+Seconds between two unsolicited state reports of the master module of address 0.
+
+The period depends on the 0-based address of the module: it is
+``STATE_REPORT_PERIOD + address * REPORT_PERIOD_STEP`` seconds, so address 0 is
+the fastest. Measured on the bus captures of 2026-09-14: the owner's four
+modules (addresses 0 to 3) report every 2.991, 3.999, 4.985 and 5.982 s, with
+intervals stable within 0.02 s, and the two modules of the Enersol hall
+(addresses 0 and 1) every 2.995 and 3.982 s on average. Addresses 4 to 6 extend
+the formula without a measure. The scenario module (address 7) is virtual and
+never reports.
+"""
+REPORT_PERIOD_STEP = 1.0
+"""Seconds added to the report period of a master module for each address."""
+MISSED_REPORTS = 3
+"""Reports a master module may miss in a row before it is unavailable."""
+SILENCE_MARGIN = 1.0
+"""Seconds added to the missed reports before a master module is unavailable."""
 CONFIRM_TIMEOUT = STATE_REPORT_PERIOD + 0.5
 """
 Seconds to wait for the state report that confirms a command (master).
 
 A module usually reports within a second of a change, but some only answer at
-their next periodic report: the wait covers one full period plus a margin.
-Measured on 2026-09-14: three commands confirmed 2 to 3 s after the press.
+their next periodic report: the wait covers one full period of the module of
+address 0 plus a margin. Measured on 2026-09-14: three commands confirmed 2 to
+3 s after the press. The wait that follows, for the module's next periodic
+report, is the same plus the extra seconds of the module's address.
 """
-MODULE_TIMEOUT = 10.0
-"""Seconds without a state report before a master module is unavailable."""
 INVALID_FRAME_LOG_INTERVAL = 60.0
 """
 Seconds between two WARNING lines about frames the format cannot carry.
@@ -161,7 +180,7 @@ class BiomatxHub:
         frame_gap: float | None = None,
         reconnect_delays: Sequence[float] | None = None,
         confirm_timeout: float | None = None,
-        module_timeout: float | None = None,
+        report_period: float | None = None,
         invalid_frame_log_interval: float | None = None,
     ) -> None:
         """
@@ -173,7 +192,11 @@ class BiomatxHub:
         exists. ``protocol`` is the firmware family of the bus, or ``None`` to
         detect it from the first valid frame. The timing arguments default to
         the module constants, read when the hub is built so tests can shorten
-        them.
+        them. ``report_period`` is the report period of the master module of
+        address 0 (``STATE_REPORT_PERIOD``); the step per address and the
+        silence margin scale with it, so that one value shortens the period and
+        the silence timeout of every address at once while keeping their
+        proportions (``report_period(address)``, ``module_timeout(address)``).
         """
         self.url = url
         self.module_count = module_count
@@ -185,8 +208,8 @@ class BiomatxHub:
         self._confirm_timeout = (
             CONFIRM_TIMEOUT if confirm_timeout is None else confirm_timeout
         )
-        self._module_timeout = (
-            MODULE_TIMEOUT if module_timeout is None else module_timeout
+        self._report_scale = (
+            1.0 if report_period is None else report_period / STATE_REPORT_PERIOD
         )
         self._invalid_frame_log_interval = (
             INVALID_FRAME_LOG_INTERVAL
@@ -297,14 +320,39 @@ class BiomatxHub:
 
         Legacy modules never report, so the link is the only signal. Master
         modules are available from their first state report until they stay
-        silent for ``MODULE_TIMEOUT``. The scenario module is virtual and never
-        reports: it is available whenever the link is.
+        silent for ``module_timeout(address)``. The scenario module is virtual
+        and never reports: it is available whenever the link is.
         """
         if not self._connected:
             return False
         if not self.reports_state or address == SCENARIO_MODULE_ADDRESS:
             return True
         return self._module_up.get(address, False)
+
+    def report_period(self, address: int) -> float:
+        """
+        Return the seconds between two state reports of master module ``address``.
+
+        ``3 + address`` s on a real bus (``STATE_REPORT_PERIOD`` and
+        ``REPORT_PERIOD_STEP``), measured for addresses 0 to 3 and extended to
+        6. The scenario module (address 7) is virtual and never reports.
+        """
+        return (STATE_REPORT_PERIOD + address * REPORT_PERIOD_STEP) * self._report_scale
+
+    def module_timeout(self, address: int) -> float:
+        """
+        Return the seconds of silence that make master module ``address`` unavailable.
+
+        Three missed reports plus a second: ``3 * report_period(address) + 1``,
+        which is 10, 13, 16 and 19 s for addresses 0 to 3. One or two reports
+        lost to a collision leave the module available. A flat 10 s did not:
+        the module of address 3 reports every 6 s, so one lost report left it
+        12 s without a word.
+        """
+        return (
+            MISSED_REPORTS * self.report_period(address)
+            + SILENCE_MARGIN * self._report_scale
+        )
 
     def module_last_seen(self, address: int) -> float | None:
         """Return the monotonic time of the last state report of a module."""
@@ -703,7 +751,7 @@ class BiomatxHub:
         if (timer := self._module_timers.pop(address, None)) is not None:
             timer.cancel()
         self._module_timers[address] = asyncio.get_running_loop().call_later(
-            self._module_timeout, self._module_silent, address
+            self.module_timeout(address), self._module_silent, address
         )
         if not self._module_up.get(address, False):
             self._module_up[address] = True
@@ -714,9 +762,9 @@ class BiomatxHub:
         self._module_timers.pop(address, None)
         self._module_up[address] = False
         _LOGGER.warning(
-            "module %d sent no state report for %.0f s, marking it unavailable",
+            "module %d sent no state report for %d s, marking it unavailable",
             address + 1,
-            self._module_timeout,
+            round(self.module_timeout(address)),
         )
         self._notify_module(address)
 
@@ -801,10 +849,10 @@ class BiomatxHub:
         refused: a default or restored relay state is not a bus fact. A module
         seen before but silent now (module 3 stayed quiet for 10 s under a
         burst of commands on 2026-09-14) is given a grace of one more
-        ``MODULE_TIMEOUT`` after it was declared silent, counted from its last
-        report so that queued commands share the same deadline instead of each
-        waiting a full timeout; nothing is written meanwhile. Callers hold
-        ``_send_lock``.
+        ``module_timeout`` of its own address after it was declared silent,
+        counted from its last report so that queued commands share the same
+        deadline instead of each waiting a full timeout; nothing is written
+        meanwhile. Callers hold ``_send_lock``.
         """
         if self.module_available(module):
             return
@@ -812,7 +860,7 @@ class BiomatxHub:
         if last_seen is None:
             msg = f"module {module + 1} has not reported its state"
             raise BiomatxModuleUnavailableError(msg)
-        deadline = last_seen + 2 * self._module_timeout
+        deadline = last_seen + 2 * self.module_timeout(module)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             msg = f"module {module + 1} is not reporting"
@@ -829,11 +877,13 @@ class BiomatxHub:
         The confirmation is registered before the press is written: the module
         often answers within the press/release gap, and that report must count.
         Without a confirmation in ``CONFIRM_TIMEOUT``, the next report of the
-        module decides, awaited for one more ``CONFIRM_TIMEOUT`` so a command
-        never holds the bus lock for more than four periods: it may confirm
-        late (pressing again would undo it), or show the press had no effect
-        (a lost frame: press once more). A module that stops reporting is not
-        pressed blind. Assumed: a report received 3.5 s after the press shows
+        module decides, awaited for one report period of the module plus the
+        margin of ``CONFIRM_TIMEOUT`` (``_next_report_window``). A command
+        holds the bus lock for two presses at most, each followed by the
+        confirmation window and then by that wait. The report may confirm late
+        (pressing again would undo it), or show the press had no effect (a lost
+        frame: press once more). A module that stops reporting is not pressed
+        blind. Assumed: a report received after the confirmation window shows
         the post-press state, since the module acts on the press at once and a
         frame does not sit on a 19200 baud bus; a lost change report is then
         followed by a periodic one carrying the same state. Callers hold
@@ -852,7 +902,9 @@ class BiomatxHub:
                 is not None
             ):
                 return
-            fresh = await self._await_report(module, _any_report, self._confirm_timeout)
+            fresh = await self._await_report(
+                module, _any_report, self._next_report_window(module)
+            )
             if fresh is None:
                 msg = (
                     f"module {module + 1} did not confirm the command "
@@ -863,6 +915,20 @@ class BiomatxHub:
                 return
         msg = f"module {module + 1} did not confirm the command after two presses"
         raise BiomatxCommandError(msg)
+
+    def _next_report_window(self, address: int) -> float:
+        """
+        Return the seconds to wait for the next periodic report of ``address``.
+
+        A report that did not confirm the command may have come just before the
+        window closed, so the following one is up to one full report period
+        away: the wait is that period plus the margin of ``CONFIRM_TIMEOUT``.
+        That is ``CONFIRM_TIMEOUT`` itself for address 0 (3.5 s), and one second
+        more for each address (6.5 s for address 3).
+        """
+        return (
+            self._confirm_timeout + self.report_period(address) - self.report_period(0)
+        )
 
     async def _press_and_await(
         self, module: int, switch: int, confirmed: Confirmation

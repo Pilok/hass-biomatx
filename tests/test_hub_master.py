@@ -1,16 +1,18 @@
 """
 Unit tests for the serial hub on the master protocol, without Home Assistant.
 
-Master modules report the state of their relays every 3 s and after every
-change, so the hub stops inferring: relay state comes from the bus, a command
-is confirmed by the state report that follows it, and a silent module becomes
-unavailable. Frames come from the 2026-09-14 captures (``frames_master.py``).
+Master modules report the state of their relays every (3 + address) s and
+after every change, so the hub stops inferring: relay state comes from the bus,
+a command is confirmed by the state report that follows it, and a silent module
+becomes unavailable. Frames come from the 2026-09-14 captures
+(``frames_master.py``).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import TYPE_CHECKING
 
 import pytest
@@ -34,16 +36,30 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
 
 CONFIRM_TIMEOUT = 0.2
+SECOND = 0.03
+"""One second of the bus at test scale: the 10 s of address 0 last 0.3 s."""
+REPORT_PERIOD = 3 * SECOND
+"""Report period of the module of address 0 at test scale."""
 MODULE_TIMEOUT = 0.3
+"""Silence timeout of the module of address 0 at test scale (10 s)."""
 COMMAND_FRAME_LENGTH = 6
+HOUSE_REPORTS = (
+    fm.STATE_HOUSE_M1,
+    fm.STATE_HOUSE_M2,
+    fm.STATE_HOUSE_M3,
+    fm.STATE_HOUSE_M4,
+)
+"""One report from each of the owner's modules, addresses 0 to 3."""
 
 
-def make_hub(
+def make_hub(  # noqa: PLR0913  # one knob per timing a test may shorten
     module_count: int = 4,
     all_off_address: int | None = 0,
     protocol: Protocol | None = Protocol.MASTER,
     frame_gap: float = 0,
     invalid_frame_log_interval: float | None = None,
+    confirm_timeout: float = CONFIRM_TIMEOUT,
+    report_period: float = REPORT_PERIOD,
 ) -> BiomatxHub:
     """Build a master hub with short timeouts, so tests run fast."""
     return BiomatxHub(
@@ -53,8 +69,8 @@ def make_hub(
         protocol=protocol,
         frame_gap=frame_gap,
         reconnect_delays=(0,),
-        confirm_timeout=CONFIRM_TIMEOUT,
-        module_timeout=MODULE_TIMEOUT,
+        confirm_timeout=confirm_timeout,
+        report_period=report_period,
         invalid_frame_log_interval=invalid_frame_log_interval,
     )
 
@@ -66,6 +82,12 @@ async def report(
     fake_serial.feed(" ".join(hex_frames))
     await settle()
     assert hub.frames_received >= 1
+
+
+async def sleep_until(start: float, seconds: float) -> None:
+    """Sleep until ``seconds`` of the bus (test scale) after the loop time ``start``."""
+    delay = start + seconds * SECOND - asyncio.get_running_loop().time()
+    await asyncio.sleep(max(0.0, delay))
 
 
 async def run_hub(hub: BiomatxHub) -> asyncio.Task[None]:
@@ -119,6 +141,15 @@ def hub_messages(caplog: pytest.LogCaptureFixture, level: int) -> list[str]:
         record.getMessage()
         for record in caplog.records
         if record.name == HUB_LOGGER and record.levelno == level
+    ]
+
+
+def silence_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Return the hub's WARNING lines about modules that stopped reporting."""
+    return [
+        message
+        for message in hub_messages(caplog, logging.WARNING)
+        if "sent no state report" in message
     ]
 
 
@@ -341,6 +372,124 @@ async def test_reconnection_drops_a_half_received_frame(
     await settle()
     assert running.stats.checksum_errors == 0
     assert running.module_available(1) is True
+
+
+# --- report period of each module -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("address", "period", "timeout"),
+    [
+        (0, 3, 10),
+        (1, 4, 13),
+        (2, 5, 16),
+        (3, 6, 19),
+        (4, 7, 22),
+        (5, 8, 25),
+        (6, 9, 28),
+    ],
+)
+def test_report_period_and_silence_timeout_follow_the_module_address(
+    address: int, period: int, timeout: int
+) -> None:
+    """
+    A module reports every (3 + address) s and is silent after three of them plus 1 s.
+
+    Measured on 2026-09-14: addresses 0 to 3 report every 2.99, 4.00, 4.99 and
+    5.98 s. Addresses 4 to 6 extend the formula without a measure.
+    """
+    hub = BiomatxHub(URL, 7, None, protocol=Protocol.MASTER)
+    assert hub.report_period(address) == pytest.approx(period)
+    assert hub.module_timeout(address) == pytest.approx(timeout)
+
+
+def test_the_injected_report_period_scales_every_address() -> None:
+    """A test shortens every period at once; address 0 keeps its 10 to 0.3 ratio."""
+    hub = make_hub()
+    for address in range(4):
+        assert hub.report_period(address) == pytest.approx((3 + address) * SECOND)
+        assert hub.module_timeout(address) == pytest.approx((10 + 3 * address) * SECOND)
+    assert hub.module_timeout(0) == pytest.approx(MODULE_TIMEOUT)
+
+
+@pytest.mark.parametrize(
+    ("address", "seconds"), [(0, "10"), (1, "13"), (2, "16"), (3, "19")]
+)
+def test_silence_warning_keeps_its_form_and_names_whole_seconds(
+    address: int, seconds: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A measuring script parses the line: module number, then whole seconds."""
+    hub = BiomatxHub(URL, 4, None, protocol=Protocol.MASTER)
+    with caplog.at_level(logging.WARNING, logger=HUB_LOGGER):
+        hub._module_silent(address)
+    (message,) = silence_warnings(caplog)
+    assert message == (
+        f"module {address + 1} sent no state report for {seconds} s, "
+        "marking it unavailable"
+    )
+    match = re.search(r"module (\d+) sent no state report for (\d+) s", message)
+    assert match is not None
+    assert match.groups() == (str(address + 1), seconds)
+
+
+async def test_each_module_goes_silent_after_its_own_timeout(
+    running: BiomatxHub, fake_serial: FakeSerialLink, caplog: pytest.LogCaptureFixture
+) -> None:
+    """
+    Three lost reports make a module unavailable: after 10, 13, 16 and 19 s.
+
+    The four modules of the house report together at 0 s and never again. Each
+    one is judged at the timeout of its own address, the module of address 0 at
+    the 10 s it always had.
+    """
+    with caplog.at_level(logging.WARNING, logger=HUB_LOGGER):
+        fake_serial.feed(" ".join(HOUSE_REPORTS))
+        await settle()
+        start = asyncio.get_running_loop().time()
+        for seconds, available in (
+            (8.5, [True, True, True, True]),
+            (11.5, [False, True, True, True]),
+            (14.5, [False, False, True, True]),
+            (17.5, [False, False, False, True]),
+            (20.5, [False, False, False, False]),
+        ):
+            await sleep_until(start, seconds)
+            assert [running.module_available(a) for a in range(4)] == available
+    assert [message.split(" sent")[0] for message in silence_warnings(caplog)] == [
+        "module 1",
+        "module 2",
+        "module 3",
+        "module 4",
+    ]
+
+
+@pytest.mark.parametrize("lost", [1, 2])
+async def test_module_of_address_3_survives_up_to_two_lost_reports(
+    running: BiomatxHub,
+    fake_serial: FakeSerialLink,
+    caplog: pytest.LogCaptureFixture,
+    lost: int,
+) -> None:
+    """
+    Module 4 reports every 6 s: one or two reports lost to a collision are no outage.
+
+    The recorder counted 74 outages of exactly 2 s on that module between
+    2026-09-21 and 2026-10-01, each one a report lost to a collision: the next
+    report came 12 s after the previous one, two seconds after the 10 s timeout
+    every module used to have.
+    """
+    await report(running, fake_serial, fm.STATE_HOUSE_M4)
+    events: list[str] = []
+    running.add_listener(("relay", 3, 0), recorder(events, "m4"))
+    start = asyncio.get_running_loop().time()
+    with caplog.at_level(logging.WARNING, logger=HUB_LOGGER):
+        await sleep_until(start, 6 * (lost + 1) - 0.5)  # just before the next report
+        assert running.module_available(3) is True
+        fake_serial.feed(fm.STATE_HOUSE_M4)
+        await settle()
+        assert running.module_available(3) is True
+    assert events == []
+    assert silence_warnings(caplog) == []
 
 
 # --- invalid frames ----------------------------------------------------------------
@@ -889,6 +1038,102 @@ async def test_commands_are_serialised_until_confirmed(
     ]
     fake_serial.feed(fm.STATE_M2_R1_ON)
     await asyncio.wait_for(second, timeout=1)
+
+
+async def test_command_grace_of_module_4_lasts_twice_its_own_timeout(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """
+    A command waits for a silent module as long as the module's own grace.
+
+    Module 4 is silent after 19 s and refused after 38 s. At 25 s it is past the
+    20 s that the grace of address 0 would allow: the command waits, nothing is
+    written, and it goes out once the module reports again.
+    """
+    await report(running, fake_serial, fm.STATE_HOUSE_M4)
+    await sleep_until(asyncio.get_running_loop().time(), 25)
+    assert running.module_available(3) is False
+    task = asyncio.create_task(running.async_set_relay(running.relay(3, 0), on=True))
+    await settle()
+    assert not task.done()
+    assert fake_serial.frames_written(COMMAND_FRAME_LENGTH) == []
+    fake_serial.feed(fm.STATE_HOUSE_M4)  # the module is back
+    await settle()
+    assert fake_serial.frames_written(COMMAND_FRAME_LENGTH) == [
+        command(3, 0, pressed=True),
+        command(3, 0, pressed=False),
+    ]
+    fake_serial.feed(fm.STATE_HOUSE_M4_R1_ON)
+    await asyncio.wait_for(task, timeout=1)
+    assert running.relay(3, 0).on is True
+
+
+async def test_command_grace_of_module_2_ends_at_twice_its_own_timeout(
+    running: BiomatxHub, fake_serial: FakeSerialLink
+) -> None:
+    """
+    The grace is counted from the last report and is not longer than the module's own.
+
+    Module 2 is silent after 13 s, so its grace ends at 26 s. At 24 s a command
+    waits for it, past the 20 s of address 0, and is refused when 26 s have passed.
+    """
+    await report(running, fake_serial, fm.STATE_HOUSE_M2)
+    await sleep_until(asyncio.get_running_loop().time(), 24)
+    task = asyncio.create_task(running.async_set_relay(running.relay(1, 0), on=True))
+    await settle()
+    assert not task.done()
+    with pytest.raises(BiomatxModuleUnavailableError, match="not reporting"):
+        await asyncio.wait_for(task, timeout=10 * SECOND)
+    assert fake_serial.frames_written(COMMAND_FRAME_LENGTH) == []
+
+
+async def test_slow_module_gets_a_whole_report_period_to_answer_a_command(
+    fake_serial: FakeSerialLink,
+) -> None:
+    """
+    After the confirmation window, the next report of module 4 is awaited for 6 s.
+
+    The module reported, unchanged, inside the confirmation window: the press was
+    lost. Its next periodic report comes one period (6 s) later, after the
+    confirmation window and the 3.5 s that used to follow it: that report must
+    still be heard, so the hub presses again instead of declaring a module that
+    keeps reporting silent. Scale: the 3 s period of address 0 lasts 0.2 s.
+    """
+    hub = make_hub(confirm_timeout=0.2, report_period=0.2)
+    task = await run_hub(hub)
+    await report(hub, fake_serial, fm.STATE_HOUSE_M4)
+    cmd = asyncio.create_task(hub.async_set_relay(hub.relay(3, 0), on=True))
+    await asyncio.sleep(0.12)  # press out, inside the 0.2 s confirmation window
+    fake_serial.feed(fm.STATE_HOUSE_M4)  # reports, unchanged
+    await asyncio.sleep(0.4)  # the next one is due 0.4 s later, at 0.52 s
+    assert not cmd.done()
+    fake_serial.feed(fm.STATE_HOUSE_M4)  # unchanged again: the press was lost
+    await settle()
+    assert fake_serial.frames_written(COMMAND_FRAME_LENGTH) == [
+        command(3, 0, pressed=True),
+        command(3, 0, pressed=False),
+        command(3, 0, pressed=True),
+        command(3, 0, pressed=False),
+    ]
+    fake_serial.feed(fm.STATE_HOUSE_M4_R1_ON)
+    await asyncio.wait_for(cmd, timeout=1)
+    assert hub.relay(3, 0).on is True
+    await stop_hub(hub, task)
+
+
+async def test_silent_slow_module_holds_the_lock_one_report_period_longer(
+    fake_serial: FakeSerialLink,
+) -> None:
+    """Module 4 never answers: the wait is the confirmation window plus its 0.4 s."""
+    hub = make_hub(confirm_timeout=0.2, report_period=0.2)
+    task = await run_hub(hub)
+    await report(hub, fake_serial, fm.STATE_HOUSE_M4)
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(BiomatxModuleUnavailableError, match="stopped reporting"):
+        await hub.async_set_relay(hub.relay(3, 0), on=True)
+    elapsed = asyncio.get_running_loop().time() - started
+    assert 0.2 + 0.4 <= elapsed < 0.2 + 0.4 + 0.1
+    await stop_hub(hub, task)
 
 
 async def test_activate_scenario_sends_master_frames_as_module_1(

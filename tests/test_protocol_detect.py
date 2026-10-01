@@ -12,7 +12,7 @@ from . import frames, frames_master as fm
 
 
 def test_master_state_frame_detects_the_master_protocol() -> None:
-    """One valid ``a5`` frame is enough: master modules report every 3 s."""
+    """One valid ``a5`` frame is enough: master modules report every 3 to 9 s."""
     assert detect(bytes.fromhex(fm.STATE_M1_ALL_OFF)) is Protocol.MASTER
 
 
