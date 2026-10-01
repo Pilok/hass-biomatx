@@ -48,6 +48,23 @@ the project uses [Semantic Versioning](https://semver.org/).
   healed by a review. The case is rare: the listen proves a master bus when the
   entry is created, so only an entry created before this release, or after a
   silent listen, can hold one.
+- `README.md` for both firmwares: what the integration provides, the hardware
+  and the wiring, how to recognise the firmware from the first frame, the
+  installation as a HACS custom repository, the devices and entities, the
+  `biomatx_invalid_frame` event, the known limits, troubleshooting and removal.
+  The step-by-step setup follows the config flow with bus discovery: the two
+  pages, the 8 second listen, what is stored, reconfiguration and what to do
+  about a wrong firmware.
+- `custom_components/biomatx/quality_scale.yaml`: the status of each of the 20
+  bronze rules of the Integration Quality Scale (14 done, 5 exempt, 1 todo:
+  `brands`), with its structure checked by the repository metadata tests.
+- `release.yml`: pushing a `v*` tag publishes the GitHub Release with the
+  matching `CHANGELOG.md` section as notes, as a pre-release when the tag
+  contains `-`. `scripts/release_notes.py` runs first and fails the workflow
+  when `manifest.json` `version` differs from the tag without the `v`, when the
+  tagged commit is not on `origin/main` (`--main-ref origin/main`, which the
+  workflow passes), or when the changelog has no section for that version. It
+  can be run by hand before tagging.
 
 ### Changed
 
@@ -61,6 +78,13 @@ the project uses [Semantic Versioning](https://semver.org/).
 - Reconfiguration reloads the entry only when it changed something. A review
   that changes nothing no longer switches the lights off for the time of a
   reload.
+- Roadmap in `AGENTS.md`, from the owner's decisions of 2026-09-30: the
+  `all_off` service is dropped from `1.1.0`, the `switch` to `button` rename
+  with a unique_id migration is dropped from "Later", and `1.0.0` also needs a
+  week with no module unavailable outside a Home Assistant restart, or with the
+  cause of that unavailability identified and treated. `1.1.0` lists the legacy
+  `biomatx.reset` service, and the domain facts say that the hub implements the
+  legacy reset while no service is registered yet.
 
 ### Removed
 

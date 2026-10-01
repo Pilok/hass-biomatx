@@ -5,12 +5,14 @@ These tests read files, not Python objects, so they run without an instance of
 Home Assistant and catch packaging mistakes before the CI validators do.
 """
 
+import ast
 import json
 from pathlib import Path
 import re
 
 from packaging.requirements import Requirement
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INTEGRATION_DIR = REPO_ROOT / "custom_components" / "biomatx"
@@ -33,6 +35,33 @@ REQUIRED_MANIFEST_KEYS = {
     "requirements",
 }
 
+# The bronze rules of the Integration Quality Scale, from tiers.json of
+# home-assistant/developers.home-assistant (docs/core/integration-quality-scale).
+BRONZE_RULES = frozenset(
+    {
+        "action-setup",
+        "appropriate-polling",
+        "brands",
+        "common-modules",
+        "config-flow-test-coverage",
+        "config-flow",
+        "dependency-transparency",
+        "docs-actions",
+        "docs-conditions",
+        "docs-high-level-description",
+        "docs-installation-instructions",
+        "docs-removal-instructions",
+        "docs-triggers",
+        "entity-event-setup",
+        "entity-unique-id",
+        "has-entity-name",
+        "runtime-data",
+        "test-before-configure",
+        "test-before-setup",
+        "unique-config-entry",
+    }
+)
+
 
 @pytest.fixture(scope="module")
 def manifest() -> dict[str, object]:
@@ -44,6 +73,13 @@ def manifest() -> dict[str, object]:
 def hacs_json() -> dict[str, object]:
     """Return the parsed HACS repository manifest."""
     return json.loads((REPO_ROOT / "hacs.json").read_text())
+
+
+@pytest.fixture(scope="module")
+def quality_scale() -> dict[str, object]:
+    """Return the ``rules`` mapping of quality_scale.yaml."""
+    text = (INTEGRATION_DIR / "quality_scale.yaml").read_text(encoding="utf-8")
+    return yaml.safe_load(text)["rules"]
 
 
 def test_manifest_has_required_keys(manifest: dict[str, object]) -> None:
@@ -204,3 +240,84 @@ def test_every_abort_reason_the_config_flow_can_raise_is_translated(
 def test_no_strings_json_in_custom_integration() -> None:
     """Home Assistant forbids strings.json for custom integrations."""
     assert not (INTEGRATION_DIR / "strings.json").exists()
+
+
+def _status(rule: object) -> str:
+    """Return the status of a rule written bare or as a status and a comment."""
+    return rule["status"] if isinstance(rule, dict) else str(rule)
+
+
+def test_quality_scale_lists_exactly_the_bronze_rules(
+    quality_scale: dict[str, object],
+) -> None:
+    """A rule missing from the file, or one that does not exist, is a mistake."""
+    assert set(quality_scale) == BRONZE_RULES
+
+
+def test_quality_scale_statuses_follow_the_hassfest_schema(
+    quality_scale: dict[str, object],
+) -> None:
+    """Hassfest validates this file for core integrations only, so check it here."""
+    for name, rule in quality_scale.items():
+        assert _status(rule) in {"done", "todo", "exempt"}, name
+        if isinstance(rule, dict):
+            assert set(rule) == {"status", "comment"}, name
+            assert str(rule["comment"]).strip(), name
+        else:
+            assert rule != "exempt", f"{name}: an exemption needs a comment"
+
+
+def test_brands_status_follows_the_brand_icon(
+    quality_scale: dict[str, object],
+) -> None:
+    """The rule is done once the integration ships ``brand/icon.png``, not before."""
+    has_icon = (INTEGRATION_DIR / "brand" / "icon.png").is_file()
+    assert (_status(quality_scale["brands"]) == "done") is has_icon
+
+
+def test_action_rules_are_exempt_while_no_action_is_registered(
+    quality_scale: dict[str, object],
+) -> None:
+    """Registering a service action turns these two exemptions into work to do."""
+    registers = any(
+        "async_register" in path.read_text(encoding="utf-8")
+        for path in INTEGRATION_DIR.rglob("*.py")
+    )
+    for rule in ("action-setup", "docs-actions"):
+        assert (_status(quality_scale[rule]) == "exempt") is not registers, rule
+
+
+# What the config flow tests must do for the rule: show cannot_connect, then end
+# the flow once the device opens, in the user step and in the reconfigure step.
+CONFIG_FLOW_RECOVERY_TESTS = {
+    "test_user_flow_cannot_connect_shows_error_then_recovers": "CREATE_ENTRY",
+    "test_reconfigure_cannot_connect_shows_error_then_recovers": (
+        "reconfigure_successful"
+    ),
+}
+
+
+def _function_source(source: str, name: str) -> str:
+    """Return the source of the test function ``name``, empty when it is missing."""
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and (
+            node.name == name
+        ):
+            return ast.get_source_segment(source, node) or ""
+    return ""
+
+
+def test_config_flow_coverage_rule_follows_the_recovery_tests(
+    quality_scale: dict[str, object],
+) -> None:
+    """The rule is done once both steps are tested through an error to the end."""
+    source = (REPO_ROOT / "tests" / "test_config_flow.py").read_text(encoding="utf-8")
+    bodies = {
+        name: _function_source(source, name) for name in CONFIG_FLOW_RECOVERY_TESTS
+    }
+    recovers = all(
+        "cannot_connect" in bodies[name] and ending in bodies[name]
+        for name, ending in CONFIG_FLOW_RECOVERY_TESTS.items()
+    )
+    done = _status(quality_scale["config-flow-test-coverage"]) == "done"
+    assert done is recovers

@@ -20,7 +20,9 @@ tests and documentation.
 custom_components/biomatx/   the integration (the only directory HACS installs)
 tests/                       pytest suite, runs without hardware (fake serial link)
 scripts/setup|lint|test      the three commands below
-.github/workflows/           lint (ruff), test (pytest), validate (hassfest + HACS)
+scripts/release_notes.py     tag check and release notes, run by release.yml
+.github/workflows/           lint (ruff), test (pytest), validate (hassfest + HACS),
+                             release (GitHub Release from a v* tag)
 hacs.json                    HACS repository manifest
 CHANGELOG.md                 Keep a Changelog; every PR edits [Unreleased]
 ```
@@ -90,9 +92,12 @@ mergeable only when all of them are green.
   throttle keeps the noise to one WARNING a minute, and `detect()` counts
   neither as proof of the master protocol.
 - The scenario module has address 7. On legacy, the "all off" scenario, when
-  configured, is the only way to resynchronise: `biomatx.reset` fires it, then
-  re-presses every relay Home Assistant believes on. On master, `reset` is
-  refused: the modules report their state.
+  configured, is the only way to resynchronise. The hub implements that reset
+  (`async_reset`): it fires the configured "all off" scenario, then presses
+  again every relay Home Assistant believes on. On master it is refused: the
+  modules report their state. The `biomatx.reset` service that will expose it,
+  legacy only and refused on master, is planned for `1.1.0`; no service is
+  registered yet.
 - Internal addressing is 0-based like the frames (unique_ids, stored config).
   Every user-facing string is 1-based ("BioMatX module 2", "Relay 8", scenario
   numbers 1-10 in the config form).
@@ -126,14 +131,27 @@ mergeable only when all of them are green.
   relay expected, observed result) and the owner's sign-off.
 - `CHANGELOG.md` updated. Legacy module removed from `extend-exclude` in
   `pyproject.toml` when it has been rewritten.
+- `custom_components/biomatx/quality_scale.yaml` updated when the change alters
+  the status of a rule.
 
 ## Release procedure
 
-1. Release PR: date the `CHANGELOG.md` section, set `manifest.json` `version`.
-2. Tag `vX.Y.Z` on `main` and push the tag; `release.yml` verifies that the
-   manifest version equals the tag and publishes the GitHub Release with the
-   changelog section as notes (pre-release when the tag contains `-`).
+1. Release PR: turn the `[Unreleased]` entries of `CHANGELOG.md` into a dated
+   `## [X.Y.Z] - YYYY-MM-DD` section, update the compare links at the end of the
+   file, and set `manifest.json` `version`. Once it is merged, from an up-to-date
+   `main` (`git pull`), `python scripts/release_notes.py vX.Y.Z --main-ref
+   origin/main` prints the notes the release will carry and fails on a mismatch:
+   run it before tagging.
+2. Tag `vX.Y.Z` on `main` and push the tag. Do not create the release by hand:
+   `release.yml` runs `scripts/release_notes.py`, which fails the workflow
+   unless the manifest version equals the tag without the `v`, the tagged commit
+   is on `origin/main` and `CHANGELOG.md` has a `## [X.Y.Z]` section, then
+   publishes the GitHub Release with that section as notes (pre-release when
+   the tag contains `-`).
 3. HACS picks up GitHub Releases only (bare tags are ignored).
+
+If the workflow fails, nothing was published: fix the cause in a pull request,
+delete the tag locally and on `origin`, and tag the new `main` commit.
 
 ## Roadmap
 
@@ -150,12 +168,14 @@ dropped: nothing was ever released under it.
   entry migration, cleanup of the upstream `binary_sensor` entities.
 - **1.0.0-rc.1**: README for both firmwares, `quality_scale.yaml`,
   `release.yml`, brand assets, installation through HACS; scope frozen.
-- **1.0.0**: after one week of soak without an error.
-- **1.1.0**: scenario `button` entities, `all_off` service, `diagnostics`,
-  review debt of #12.
+- **1.0.0**: after one week of soak with no ERROR and no module unavailable
+  outside a Home Assistant restart, or with the cause of that unavailability
+  identified and treated.
+- **1.1.0**: scenario `button` entities, `biomatx.reset` service (legacy only,
+  refused on master), `diagnostics`, review debt of #12.
 - **1.2.0**: measured robustness of the reader (fuzzing, capture replays, load
   benches, two-reader detection).
 - **Later**: per-relay profiles (timer, detector, contactor, witness), guided
-  optimisation, `switch` renamed `button` with a unique_id migration.
+  optimisation.
 - **2.0.0**: reserved for a breaking change (legacy dropped, unique_id scheme
   changed without migration). None planned.

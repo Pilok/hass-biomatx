@@ -1,0 +1,82 @@
+# Integration Quality Scale, bronze tier: the 20 rules listed in tiers.json of
+# home-assistant/developers.home-assistant (docs/core/integration-quality-scale,
+# commit 534c999, read on 2026-09-30). A rule is done only when the code or the
+# documentation of this repository holds it. Hassfest validates this file for
+# core integrations only; tests/test_repo_metadata.py checks its structure here.
+# The manifest declares no quality_scale: bronze needs every rule done or exempt.
+# The statuses describe the code and the documentation as they were when this
+# file was written; a change that alters a rule updates it (AGENTS.md).
+rules:
+  # Bronze
+  action-setup:
+    status: exempt
+    comment: The integration registers no service actions.
+  appropriate-polling:
+    status: exempt
+    comment: >-
+      The integration does not poll. The hub reads the bus continuously and
+      pushes every change to the entities, which set should_poll to False.
+  brands:
+    status: todo
+    comment: >-
+      No brand/ directory yet. Since Home Assistant 2026.3 a custom integration
+      ships its images in custom_components/biomatx/brand/, at least icon.png
+      (256x256 in the home-assistant/brands README). The HACS brands check is
+      ignored in validate.yml until then.
+  common-modules:
+    status: done
+    comment: >-
+      The base entity is in entity.py. There is no coordinator: the hub in
+      hub.py pushes the state.
+  config-flow-test-coverage:
+    status: done
+    comment: >-
+      config_flow.py is at 100 % statement coverage. The user step and the
+      reconfigure step each show cannot_connect, then end the flow once the
+      device opens (test_user_flow_cannot_connect_shows_error_then_recovers and
+      test_reconfigure_cannot_connect_shows_error_then_recovers). A second entry
+      for one device is refused, and a running entry is reconfigured without a
+      second open of its port.
+  config-flow:
+    status: done
+    comment: >-
+      data_description is set on every field. Owner's decision: the module count
+      and the optional all-off scenario describe the installation, not a
+      preference, so they stay in the entry data and change through the
+      reconfigure flow.
+  dependency-transparency:
+    status: done
+    comment: >-
+      The only requirement, serialx (>=1.10.0,<2), is licensed Apache-2.0, is on
+      PyPI, and its releases 1.10.0 and 1.11.0 are published from a public
+      GitHub Actions workflow with PyPI attestations and tagged in its
+      repository.
+  docs-actions:
+    status: exempt
+    comment: The integration provides no service actions.
+  docs-conditions:
+    status: exempt
+    comment: The integration provides no conditions.
+  docs-high-level-description: done
+  docs-installation-instructions:
+    status: done
+    comment: >-
+      README.md lists the prerequisites, the HACS installation and the two pages
+      of the setup, reconfiguration included.
+  docs-removal-instructions: done
+  docs-triggers:
+    status: exempt
+    comment: The integration provides no triggers.
+  entity-event-setup: done
+  entity-unique-id: done
+  has-entity-name: done
+  runtime-data: done
+  test-before-configure:
+    status: done
+    comment: >-
+      The user step, and the reconfigure step for a new device or an entry that
+      is not running, open the serial device and show cannot_connect when they
+      cannot, then listen to the bus for 8 seconds and show the firmware and the
+      modules heard.
+  test-before-setup: done
+  unique-config-entry: done
