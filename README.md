@@ -55,7 +55,7 @@ What changes for Home Assistant:
 |---|---|---|
 | Light state | inferred from the button presses seen on the bus and from the commands Home Assistant sends; shown as assumed, and restored after a restart | the state the module reports |
 | Command | the state flips as soon as the press is sent; nothing confirms it | sent as a press and a release, then confirmed by the module's report; pressed once more if the relay did not move; an error if it still did not |
-| Timer expiry | invisible | visible within three seconds |
+| Timer expiry | invisible | visible within a second, and at the latest at the module's next periodic report (3 s for module 1, 6 s for module 4) |
 | Availability | every entity follows the serial link | every entity follows the link, and the lights of a module become unavailable when it has missed three of its reports, which is `3 × (2 + N) + 1` s of silence: 10 s for module 1, 19 s for module 4 |
 
 The report periods of modules 1 to 4 were measured on two buses (3, 4, 5 and 6 s). Modules 5 to 7 are assumed to follow the same formula (7, 8 and 9 s).
@@ -148,7 +148,7 @@ Example: the frame `a5 e8 03 80 84 4a` gives `reason` "button out of range", `ta
 
 - **Legacy firmware: the state is assumed.** The modules never report it. A relay in timer mode switches off without any frame on the bus, a frame lost in a collision is not seen, and a change made while Home Assistant is stopped is not seen either, so a light can show the wrong state. If an "all off" scenario is programmed on the modules and declared in the integration settings, every light is marked off in Home Assistant when that scenario is seen on the bus, which realigns the assumed state.
 - **Master firmware: the detectors' "module 4, output 11" frame.** Motion detectors sometimes emit a frame addressed to output 11 of module 4, an output that does not exist. The master firmware executes it as a press on relay 1 of the module it addresses, which is module 4 in the captures this integration was built from. The integration reports the frame, through the event above and a warning, and cannot prevent it. Leave relay 1 of the addressed module free of any load.
-- **Timer relays.** A relay in timer mode switches itself off. On the master firmware the next state report shows it, within three seconds; on the legacy firmware Home Assistant does not see it. Per-relay behaviours (timer, detector, contactor) are not modelled yet: every relay is treated as a latching relay.
+- **Timer relays.** A relay in timer mode switches itself off. On the master firmware the next state report shows it, within a second, and at the latest at the module's next periodic report (3 s for module 1, 6 s for module 4); on the legacy firmware Home Assistant does not see it. Per-relay behaviours (timer, detector, contactor) are not modelled yet: every relay is treated as a latching relay.
 - **No dimming.** The relays are on/off contacts. The lights have no brightness and nothing in the integration dims a light.
 - **One reader per serial port.** See [Hardware](#hardware).
 - **One command at a time.** Commands are sent one by one for the whole bus. On the master firmware each waits for its confirmation, from half a second to a few seconds, so a script that switches many relays takes that long per relay.

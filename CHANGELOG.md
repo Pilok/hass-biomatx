@@ -131,9 +131,10 @@ the project uses [Semantic Versioning](https://semver.org/).
   (3.5 s, unchanged: a module reports within a second of a change) is now
   awaited for one full report period of its own plus the same 0.5 s margin:
   3.5 s for address 0 as before, 6.5 s for address 3, instead of 3.5 s for every
-  module. A module whose next periodic report comes later than 3.5 s after the
-  press, and that had reported the relay unmoved meanwhile, was declared
-  silent: it is now pressed again once, as the module of address 0 always was.
+  module. A module whose next periodic report comes later than 7 s after the
+  press (the 3.5 s window plus the 3.5 s wait), and that had reported the relay
+  unmoved inside the window, was declared silent: it is now pressed again once,
+  as the module of address 0 always was.
 - `BiomatxHub` takes `report_period` (the report period of address 0, 3 s by
   default) in place of `module_timeout`; the step per address and the silence
   margin scale with it, so a test shortens every period at once. The

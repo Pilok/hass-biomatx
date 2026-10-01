@@ -92,7 +92,7 @@ def test_a_checksummed_frame_with_impossible_fields_is_no_proof_of_master() -> N
     The detectors' output-11 frame alone is no proof of master; the report is.
 
     Alone it even reads as a legacy press (``a5 e8``): the documented price of
-    ignoring checksummed windows, paid once per 3 s at most on a master bus.
+    ignoring checksummed windows, paid once per report period at most on a master bus.
     """
     phantom = bytes.fromhex(fm.PHANTOM_PRESS_M4_OUT11)
     assert detect(phantom) is Protocol.LEGACY
