@@ -5,6 +5,7 @@ These tests read files, not Python objects, so they run without an instance of
 Home Assistant and catch packaging mistakes before the CI validators do.
 """
 
+import ast
 import json
 from pathlib import Path
 import re
@@ -284,3 +285,39 @@ def test_action_rules_are_exempt_while_no_action_is_registered(
     )
     for rule in ("action-setup", "docs-actions"):
         assert (_status(quality_scale[rule]) == "exempt") is not registers, rule
+
+
+# What the config flow tests must do for the rule: show cannot_connect, then end
+# the flow once the device opens, in the user step and in the reconfigure step.
+CONFIG_FLOW_RECOVERY_TESTS = {
+    "test_user_flow_cannot_connect_shows_error_then_recovers": "CREATE_ENTRY",
+    "test_reconfigure_cannot_connect_shows_error_then_recovers": (
+        "reconfigure_successful"
+    ),
+}
+
+
+def _function_source(source: str, name: str) -> str:
+    """Return the source of the test function ``name``, empty when it is missing."""
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and (
+            node.name == name
+        ):
+            return ast.get_source_segment(source, node) or ""
+    return ""
+
+
+def test_config_flow_coverage_rule_follows_the_recovery_tests(
+    quality_scale: dict[str, object],
+) -> None:
+    """The rule is done once both steps are tested through an error to the end."""
+    source = (REPO_ROOT / "tests" / "test_config_flow.py").read_text(encoding="utf-8")
+    bodies = {
+        name: _function_source(source, name) for name in CONFIG_FLOW_RECOVERY_TESTS
+    }
+    recovers = all(
+        "cannot_connect" in bodies[name] and ending in bodies[name]
+        for name, ending in CONFIG_FLOW_RECOVERY_TESTS.items()
+    )
+    done = _status(quality_scale["config-flow-test-coverage"]) == "done"
+    assert done is recovers
