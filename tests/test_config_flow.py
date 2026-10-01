@@ -534,11 +534,13 @@ async def test_reconfigure_of_a_disabled_entry_held_wrongly_in_legacy_stores_mas
     hass: HomeAssistant, fake_serial: FakeSerialLink
 ) -> None:
     """
-    The way out of a false legacy: disable the entry, then reconfigure it.
+    An entry that is not loaded and held wrongly in legacy stores master once heard.
 
     A review keeps the protocol the hub of a loaded entry works with, legacy
-    included. A disabled entry is not loaded: the flow listens, and the bus
-    decodes as master.
+    included. An entry that is not loaded is listened to, and a proved master
+    replaces the stored protocol. A disabled entry stands for any entry that is
+    not loaded: the frontend offers no Reconfigure on it, so this checks the
+    server side only, through ``flow.async_init``.
     """
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -648,10 +650,10 @@ async def test_reconfigure_rejects_device_owned_by_other_entry(
     assert fake_serial.opens == []
 
 
-async def test_reconfigure_cannot_connect_shows_error(
+async def test_reconfigure_cannot_connect_shows_error_then_recovers(
     hass: HomeAssistant, fake_serial: FakeSerialLink, mock_config_entry: MockConfigEntry
 ) -> None:
-    """A new device that cannot be opened is not stored."""
+    """A new device that cannot be opened is not stored; once it opens, all is done."""
     mock_config_entry.add_to_hass(hass)
     fake_serial.fail_open = OSError("no such device")
     result = await start_reconfigure(hass, mock_config_entry)
@@ -660,6 +662,45 @@ async def test_reconfigure_cannot_connect_shows_error(
     assert result["step_id"] == "reconfigure"
     assert result["errors"] == {"base": "cannot_connect"}
     assert mock_config_entry.data[CONF_DEVICE] == URL
+    result = await configure(hass, result, {CONF_DEVICE: OTHER_URL})
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "modules"
+    result = await configure(hass, result, {CONF_MODULE_COUNT: MODULE_COUNT})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert mock_config_entry.unique_id == OTHER_URL
+    assert mock_config_entry.data == {
+        CONF_DEVICE: OTHER_URL,
+        CONF_MODULE_COUNT: MODULE_COUNT,
+    }
+    assert len(fake_serial.opens) == 2
+
+
+async def test_reconfigure_same_device_that_cannot_be_opened_then_recovers(
+    hass: HomeAssistant, fake_serial: FakeSerialLink, mock_config_entry: MockConfigEntry
+) -> None:
+    """An entry that is not loaded may find its adapter unplugged: error, then done."""
+    mock_config_entry.add_to_hass(hass)
+    fake_serial.fail_open = OSError("no such device")
+    result = await start_reconfigure(hass, mock_config_entry)
+    result = await configure(hass, result, {CONF_DEVICE: URL})
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reconfigure"
+    assert result["errors"] == {"base": "cannot_connect"}
+    result = await configure(hass, result, {CONF_DEVICE: URL})
+    assert result["step_id"] == "modules"
+    result = await configure(
+        hass, result, {CONF_MODULE_COUNT: 3, CONF_ALL_OFF_SCENARIO: 6}
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert mock_config_entry.data == {
+        CONF_DEVICE: URL,
+        CONF_MODULE_COUNT: 3,
+        CONF_ALL_OFF_ADDRESS: 5,
+        CONF_PROTOCOL: "legacy",
+    }
+    assert len(fake_serial.opens) == 2
 
 
 async def test_reconfigure_loaded_entry_reads_the_running_hub_and_opens_no_port(

@@ -26,7 +26,7 @@
       },
       "reconfigure": {
         "title": "Reconfigure the BioMatX bus",
-        "description": "Change the serial device, or keep it to review the modules and the \"all off\" scenario on the next page. A device already read by the running integration is not opened a second time: the modules that integration has heard are shown instead. To correct a wrong protocol, disable the entry, reconfigure it, then enable it again: the bus of a disabled entry is listened to. Entities keep their identifiers.",
+        "description": "Change the serial device, or keep it to review the modules and the \"all off\" scenario on the next page. A device already read by the running integration is not opened a second time: the modules that integration has heard are shown instead. Entities keep their identifiers.",
         "data": {
           "device": "Serial device"
         },

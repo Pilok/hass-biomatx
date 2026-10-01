@@ -44,9 +44,10 @@ the project uses [Semantic Versioning](https://semver.org/).
   included, because dropping the key would reload the entry and leave the hub
   without a codec until the next button press; after a listen, a proved `master`
   replaces the stored protocol, a silent bus keeps it on the entry's own device
-  and drops it on a new device. A false `legacy` is therefore not healed by a
-  review: disable the entry, reconfigure it, then enable it again, and the
-  listen decodes `master`. The `reconfigure` step says so.
+  and drops it on a new device. A `legacy` stored wrongly is therefore not
+  healed by a review. The case is rare: the listen proves a master bus when the
+  entry is created, so only an entry created before this release, or after a
+  silent listen, can hold one.
 
 ### Changed
 
