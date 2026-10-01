@@ -75,9 +75,14 @@ mergeable only when all of them are green.
   module 0 relay 7). Handle them like any other frame.
 - Legacy modules never report state: Home Assistant infers relay state from
   observed presses and from the frames it sends, lights are `assumed_state`.
-  Master modules report their ten relays every 3 s and within a second of a
+  Master modules report their ten relays every `3 + address` s (0-based
+  address: 3, 4, 5 and 6 s measured for addresses 0 to 3 on 2026-09-14, the
+  formula extended to address 6 without a measure) and within a second of a
   change: lights show the real state, a command waits for the report that
-  confirms it, a module silent for 10 s is unavailable.
+  confirms it, a module silent for three of its reports plus 1 s (10, 13, 16
+  and 19 s for addresses 0 to 3) is unavailable. Never assume one period for
+  every module: a single report lost to a collision is 12 s of silence on
+  address 3.
 - Relays in timer mode switch off by themselves without any bus frame.
   Collisions between two emitters produce garbage bytes (`switch >= 10`, wrong
   release bytes). Both are normal on this bus: log at DEBUG, never ERROR.
