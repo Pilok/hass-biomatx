@@ -6,6 +6,19 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.3] - 2026-10-03
+
+Second pre-release for the **master firmware**. The config flow listens to
+the bus, proposes the modules it heard and stores `protocol: master` once it
+decoded a master frame (config entries move to version 3, migrated from
+version 2). Each master module now has its own silence timeout, derived from
+its report period of about (3 + address) s: on the owner's bus, module 4 no
+longer goes unavailable for 2 s after a single report lost to a collision,
+which happened about seven times a day. The README covers both firmwares,
+and pushing a `v*` tag publishes the GitHub Release. Known limit: the config
+flow listens for 8 s, which can miss a module of address 6 (9 s period) and,
+when reports are lost, rarely a module of address 3 to 5.
+
 ### Added
 
 - Bus discovery in the config flow (decision D17 of the plan). Once the serial
@@ -334,6 +347,7 @@ onwards; the 2.0 line announced here was never opened. See the roadmap in
   upstream `reload` service is dropped for good (Home Assistant reloads the
   config entry, and the link reconnects by itself).
 
-[Unreleased]: https://github.com/Pilok/hass-biomatx/compare/v1.0.0-beta.2...HEAD
+[Unreleased]: https://github.com/Pilok/hass-biomatx/compare/v1.0.0-beta.3...HEAD
+[1.0.0-beta.3]: https://github.com/Pilok/hass-biomatx/compare/v1.0.0-beta.2...v1.0.0-beta.3
 [1.0.0-beta.2]: https://github.com/Pilok/hass-biomatx/compare/v1.0.0-beta.1...v1.0.0-beta.2
 [1.0.0-beta.1]: https://github.com/Pilok/hass-biomatx/compare/f2ea009...v1.0.0-beta.1
