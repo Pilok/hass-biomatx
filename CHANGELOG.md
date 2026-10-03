@@ -6,7 +6,7 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [1.0.0-beta.3] - 2026-10-02
+## [1.0.0-beta.3] - 2026-10-03
 
 Second pre-release for the **master firmware**. The config flow listens to
 the bus, proposes the modules it heard and stores `protocol: master` once it
