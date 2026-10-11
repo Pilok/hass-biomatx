@@ -26,6 +26,8 @@ jobs:
     name: HACS validation
     runs-on: ubuntu-latest
     steps:
+      # The SHA pins action.yml only: it runs the floating
+      # docker://ghcr.io/hacs/action:main image, so the validators can change.
       - name: Run HACS validation
         uses: hacs/action@d556e736723344f83838d08488c983a15381059a # 22.5.0
         with:

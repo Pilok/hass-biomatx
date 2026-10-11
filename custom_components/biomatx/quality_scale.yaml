@@ -3,7 +3,8 @@
 # commit 534c999, read on 2026-09-30). A rule is done only when the code or the
 # documentation of this repository holds it. Hassfest validates this file for
 # core integrations only; tests/test_repo_metadata.py checks its structure here.
-# The manifest declares no quality_scale: bronze needs every rule done or exempt.
+# Every bronze rule is done or exempt; the manifest declares no quality_scale,
+# which is the owner's call.
 # The statuses describe the code and the documentation as they were when this
 # file was written; a change that alters a rule updates it (AGENTS.md).
 rules:

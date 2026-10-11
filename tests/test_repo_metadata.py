@@ -285,19 +285,35 @@ BRAND_IMAGES = {
     "dark_icon@2x.png": 512,
 }
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-PNG_COLOR_TYPE_RGBA = 6
+# Colour types with an alpha channel; palette (3) needs a tRNS chunk as well, so
+# an optimiser that rewrites RGBA to grey+alpha or to a palette still passes.
+PNG_ALPHA_COLOR_TYPES = {4, 6}
+PNG_COLOR_TYPE_PALETTE = 3
+
+
+def _png_chunk_types(data: bytes) -> list[bytes]:
+    """Return the chunk types of a PNG file, in order."""
+    types, offset = [], len(PNG_SIGNATURE)
+    while offset + 8 <= len(data):
+        length = int.from_bytes(data[offset : offset + 4], "big")
+        types.append(data[offset + 4 : offset + 8])
+        offset += 12 + length
+    return types
 
 
 @pytest.mark.parametrize(("name", "size"), BRAND_IMAGES.items())
 def test_brand_image_is_a_square_png_with_transparency(name: str, size: int) -> None:
-    """Read the IHDR chunk: exact square size and an alpha channel."""
-    header = (INTEGRATION_DIR / "brand" / name).read_bytes()[:29]
-    assert header[:8] == PNG_SIGNATURE, name
-    assert header[12:16] == b"IHDR", name
-    width = int.from_bytes(header[16:20], "big")
-    height = int.from_bytes(header[20:24], "big")
+    """Read the IHDR chunk: exact square size and a way to be transparent."""
+    data = (INTEGRATION_DIR / "brand" / name).read_bytes()
+    assert data[:8] == PNG_SIGNATURE, name
+    assert data[12:16] == b"IHDR", name
+    width = int.from_bytes(data[16:20], "big")
+    height = int.from_bytes(data[20:24], "big")
     assert (width, height) == (size, size), name
-    assert header[25] == PNG_COLOR_TYPE_RGBA, name
+    color_type = data[25]
+    assert color_type in PNG_ALPHA_COLOR_TYPES or (
+        color_type == PNG_COLOR_TYPE_PALETTE and b"tRNS" in _png_chunk_types(data)
+    ), name
 
 
 def test_brand_directory_carries_the_icon_licence() -> None:
@@ -305,6 +321,8 @@ def test_brand_directory_carries_the_icon_licence() -> None:
     notice = (INTEGRATION_DIR / "brand" / "LICENSE.lucide").read_text(encoding="utf-8")
     assert "ISC License" in notice
     assert "Lucide Icons and Contributors" in notice
+    # The upstream file also carries the MIT notice of Feather, kept verbatim.
+    assert "Copyright (c) 2013-present Cole Bemis" in notice
 
 
 def test_action_rules_are_exempt_while_no_action_is_registered(
