@@ -11,3 +11,7 @@ September 2026 include HACS packaging, Home Assistant 2026 compatibility,
 an in-integration serial hub, tests and continuous integration. The bus
 protocol was decoded by Damien Merenne (https://github.com/canatella/pybiomatx,
 MIT licence).
+
+The brand icons in custom_components/biomatx/brand/ are rendered from the
+Lucide lightbulb icon (lucide-static 1.55.0, ISC licence, notice in
+custom_components/biomatx/brand/LICENSE.lucide).

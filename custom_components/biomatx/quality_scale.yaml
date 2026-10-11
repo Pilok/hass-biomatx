@@ -3,7 +3,8 @@
 # commit 534c999, read on 2026-09-30). A rule is done only when the code or the
 # documentation of this repository holds it. Hassfest validates this file for
 # core integrations only; tests/test_repo_metadata.py checks its structure here.
-# The manifest declares no quality_scale: bronze needs every rule done or exempt.
+# Every bronze rule is done or exempt; the manifest declares no quality_scale,
+# which is the owner's call.
 # The statuses describe the code and the documentation as they were when this
 # file was written; a change that alters a rule updates it (AGENTS.md).
 rules:
@@ -17,12 +18,13 @@ rules:
       The integration does not poll. The hub reads the bus continuously and
       pushes every change to the entities, which set should_poll to False.
   brands:
-    status: todo
+    status: done
     comment: >-
-      No brand/ directory yet. Since Home Assistant 2026.3 a custom integration
-      ships its images in custom_components/biomatx/brand/, at least icon.png
-      (256x256 in the home-assistant/brands README). The HACS brands check is
-      ignored in validate.yml until then.
+      Home Assistant 2026.3 and later serve the images in
+      custom_components/biomatx/brand/: icon.png (256x256), icon@2x.png
+      (512x512) and their dark variants, with transparency. A missing logo
+      falls back to the icon. The glyph is the Lucide lightbulb (ISC, notice in
+      brand/LICENSE.lucide).
   common-modules:
     status: done
     comment: >-
