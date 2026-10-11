@@ -6,6 +6,20 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Brand icons in `custom_components/biomatx/brand/`, served by Home Assistant
+  2026.3 and later: `icon.png` (256x256), `icon@2x.png` (512x512) and their
+  dark variants, transparent PNGs of the Lucide lightbulb (`lucide-static`
+  1.55.0, ISC). The licence notice ships next to them in `LICENSE.lucide`,
+  since HACS installs the integration directory only.
+
+### Changed
+
+- `quality_scale.yaml`: `brands` is done, so all 20 bronze rules are done or
+  exempt. The manifest still declares no `quality_scale`.
+- `validate.yml`: the HACS validation no longer ignores the `brands` check.
+
 ## [1.0.0-beta.3] - 2026-10-03
 
 Second pre-release for the **master firmware**. The config flow listens to

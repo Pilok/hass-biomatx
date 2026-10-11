@@ -17,12 +17,13 @@ rules:
       The integration does not poll. The hub reads the bus continuously and
       pushes every change to the entities, which set should_poll to False.
   brands:
-    status: todo
+    status: done
     comment: >-
-      No brand/ directory yet. Since Home Assistant 2026.3 a custom integration
-      ships its images in custom_components/biomatx/brand/, at least icon.png
-      (256x256 in the home-assistant/brands README). The HACS brands check is
-      ignored in validate.yml until then.
+      Home Assistant 2026.3 and later serve the images in
+      custom_components/biomatx/brand/: icon.png (256x256), icon@2x.png
+      (512x512) and their dark variants, with transparency. A missing logo
+      falls back to the icon. The glyph is the Lucide lightbulb (ISC, notice in
+      brand/LICENSE.lucide).
   common-modules:
     status: done
     comment: >-
