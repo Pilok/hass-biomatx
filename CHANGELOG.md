@@ -17,7 +17,9 @@ the project uses [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - `quality_scale.yaml`: `brands` is done, so all 20 bronze rules are done or
-  exempt. The manifest still declares no `quality_scale`.
+  exempt.
+- `manifest.json` declares `quality_scale: bronze`, on the owner's decision;
+  a repository metadata test ties the claim to `quality_scale.yaml`.
 - `validate.yml`: the HACS validation no longer ignores the `brands` check.
 
 ## [1.0.0-beta.3] - 2026-10-03
