@@ -275,6 +275,38 @@ def test_brands_status_follows_the_brand_icon(
     assert (_status(quality_scale["brands"]) == "done") is has_icon
 
 
+# Brand images Home Assistant serves from custom_components/<domain>/brand/
+# (2026.3+), with their size in the home-assistant/brands README. A missing
+# logo falls back to the icon, so the integration ships icons only.
+BRAND_IMAGES = {
+    "icon.png": 256,
+    "icon@2x.png": 512,
+    "dark_icon.png": 256,
+    "dark_icon@2x.png": 512,
+}
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+PNG_COLOR_TYPE_RGBA = 6
+
+
+@pytest.mark.parametrize(("name", "size"), BRAND_IMAGES.items())
+def test_brand_image_is_a_square_png_with_transparency(name: str, size: int) -> None:
+    """Read the IHDR chunk: exact square size and an alpha channel."""
+    header = (INTEGRATION_DIR / "brand" / name).read_bytes()[:29]
+    assert header[:8] == PNG_SIGNATURE, name
+    assert header[12:16] == b"IHDR", name
+    width = int.from_bytes(header[16:20], "big")
+    height = int.from_bytes(header[20:24], "big")
+    assert (width, height) == (size, size), name
+    assert header[25] == PNG_COLOR_TYPE_RGBA, name
+
+
+def test_brand_directory_carries_the_icon_licence() -> None:
+    """HACS installs custom_components/biomatx only: the notice travels with it."""
+    notice = (INTEGRATION_DIR / "brand" / "LICENSE.lucide").read_text(encoding="utf-8")
+    assert "ISC License" in notice
+    assert "Lucide Icons and Contributors" in notice
+
+
 def test_action_rules_are_exempt_while_no_action_is_registered(
     quality_scale: dict[str, object],
 ) -> None:
