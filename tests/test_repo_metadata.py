@@ -267,6 +267,15 @@ def test_quality_scale_statuses_follow_the_hassfest_schema(
             assert rule != "exempt", f"{name}: an exemption needs a comment"
 
 
+def test_manifest_declares_bronze_exactly_when_every_rule_is_met(
+    manifest: dict[str, object], quality_scale: dict[str, object]
+) -> None:
+    """The bronze claim in the manifest stays true to quality_scale.yaml."""
+    met = all(_status(rule) in {"done", "exempt"} for rule in quality_scale.values())
+    assert met
+    assert manifest.get("quality_scale") == "bronze"
+
+
 def test_brands_status_follows_the_brand_icon(
     quality_scale: dict[str, object],
 ) -> None:
