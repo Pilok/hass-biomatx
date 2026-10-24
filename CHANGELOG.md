@@ -6,6 +6,17 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0-rc.1] - 2026-10-24
+
+Release candidate of `1.0.0`. The scope is frozen: until `1.0.0`, only fixes
+land. The code of the integration is the one of `1.0.0-beta.3`; this release
+adds the brand icons and declares the bronze tier of the Integration Quality
+Scale. On the owner's bus, `1.0.0-beta.3` ran eight days (3 to 11 October)
+with no module unavailable outside a Home Assistant restart (module 4 used to
+drop about seven times a day), 40 confirmed commands at 3.9 s at most, five
+restarts recovered in 29 to 48 s, and one unplugged serial adapter recovered
+without a restart.
+
 ### Added
 
 - Brand icons in `custom_components/biomatx/brand/`, served by Home Assistant
@@ -363,7 +374,8 @@ onwards; the 2.0 line announced here was never opened. See the roadmap in
   upstream `reload` service is dropped for good (Home Assistant reloads the
   config entry, and the link reconnects by itself).
 
-[Unreleased]: https://github.com/Pilok/hass-biomatx/compare/v1.0.0-beta.3...HEAD
+[Unreleased]: https://github.com/Pilok/hass-biomatx/compare/v1.0.0-rc.1...HEAD
+[1.0.0-rc.1]: https://github.com/Pilok/hass-biomatx/compare/v1.0.0-beta.3...v1.0.0-rc.1
 [1.0.0-beta.3]: https://github.com/Pilok/hass-biomatx/compare/v1.0.0-beta.2...v1.0.0-beta.3
 [1.0.0-beta.2]: https://github.com/Pilok/hass-biomatx/compare/v1.0.0-beta.1...v1.0.0-beta.2
 [1.0.0-beta.1]: https://github.com/Pilok/hass-biomatx/compare/f2ea009...v1.0.0-beta.1
