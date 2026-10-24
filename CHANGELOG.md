@@ -6,7 +6,7 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [1.0.0-rc.1] - 2026-10-11
+## [1.0.0-rc.1] - 2026-10-24
 
 Release candidate of `1.0.0`. The scope is frozen: until `1.0.0`, only fixes
 land. The code of the integration is the one of `1.0.0-beta.3`; this release
