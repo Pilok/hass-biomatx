@@ -167,15 +167,18 @@ pre-releases may change anything. The "2.0" numbering used before that date was
 dropped: nothing was ever released under it.
 
 - **1.0.0-beta.1** (2026-09-14, published): legacy firmware only, path frozen.
-- **1.0.0-beta.2**: master firmware (protocol codecs, real relay state, `event`
-  entities, confirmed commands), invalid frames visible.
-- **1.0.0-beta.3**: config flow with bus discovery, protocol stored at setup,
-  entry migration, cleanup of the upstream `binary_sensor` entities.
-- **1.0.0-rc.1**: README for both firmwares, `quality_scale.yaml`,
-  `release.yml`, brand assets, installation through HACS; scope frozen.
-- **1.0.0**: after one week of soak with no ERROR and no module unavailable
-  outside a Home Assistant restart, or with the cause of that unavailability
-  identified and treated.
+- **1.0.0-beta.2** (2026-09-17, published): master firmware (protocol codecs,
+  real relay state, `event` entities, confirmed commands), invalid frames
+  visible.
+- **1.0.0-beta.3** (2026-10-03, published): config flow with bus discovery,
+  protocol stored at setup, entry migration, cleanup of the upstream
+  `binary_sensor` entities.
+- **1.0.0-rc.1** (2026-10-24, published): README for both firmwares,
+  `quality_scale.yaml`, `release.yml`, brand assets, installation through
+  HACS; scope frozen.
+- **1.0.0** (2026-10-31): after one week of soak with no ERROR and no module
+  unavailable outside a Home Assistant restart, or with the cause of that
+  unavailability identified and treated.
 - **1.1.0**: scenario `button` entities, `biomatx.reset` service (legacy only,
   refused on master), `diagnostics`, review debt of #12.
 - **1.2.0**: measured robustness of the reader (fuzzing, capture replays, load

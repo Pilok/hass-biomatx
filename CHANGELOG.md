@@ -6,6 +6,25 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-31
+
+First stable release. It fixes the public API (unique_id scheme, entity
+model, config entry keys and version, supported firmwares, Home Assistant
+events): until `2.0.0`, changes to it are backward compatible. The
+integration code is the one of `1.0.0-rc.1`. On the owner's bus,
+`1.0.0-rc.1`, installed through HACS, ran seven days (24 to 31 October) with
+no module unavailable outside four Home Assistant restarts, no ERROR from the
+integration, and every command confirmed: 24 on module 2 at 4.3 s at most,
+and 10 on module 4 at 2.9 to 9.0 s, the module with the slowest report period
+(6 s). After a restart, the states shown in Home Assistant matched the LEDs of
+the four modules.
+
+### Changed
+
+- `README.md`: installation through HACS for a stable release; pre-releases
+  need the repository's "Pre-release" switch.
+- `AGENTS.md`: release dates in the roadmap.
+
 ## [1.0.0-rc.1] - 2026-10-24
 
 Release candidate of `1.0.0`. The scope is frozen: until `1.0.0`, only fixes
@@ -374,7 +393,8 @@ onwards; the 2.0 line announced here was never opened. See the roadmap in
   upstream `reload` service is dropped for good (Home Assistant reloads the
   config entry, and the link reconnects by itself).
 
-[Unreleased]: https://github.com/Pilok/hass-biomatx/compare/v1.0.0-rc.1...HEAD
+[Unreleased]: https://github.com/Pilok/hass-biomatx/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/Pilok/hass-biomatx/compare/v1.0.0-rc.1...v1.0.0
 [1.0.0-rc.1]: https://github.com/Pilok/hass-biomatx/compare/v1.0.0-beta.3...v1.0.0-rc.1
 [1.0.0-beta.3]: https://github.com/Pilok/hass-biomatx/compare/v1.0.0-beta.2...v1.0.0-beta.3
 [1.0.0-beta.2]: https://github.com/Pilok/hass-biomatx/compare/v1.0.0-beta.1...v1.0.0-beta.2
