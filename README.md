@@ -66,10 +66,10 @@ Nothing is sent on the bus when Home Assistant starts.
 
 1. Install HACS if you have not yet, following its [documentation](https://hacs.xyz/docs/use/download/download/).
 2. In HACS, open the menu at the top right, choose **Custom repositories**, enter `https://github.com/Pilok/hass-biomatx`, choose the type **Integration** and select **Add**.
-3. Open **BioMatX** in HACS and download it. Every release before `1.0.0` is a pre-release, and while no stable release exists HACS downloads the default branch, which can be ahead of the last release. To install a release instead, choose it under **Need a different version?** in the download dialog. HACS announces the removal of that selector; when it is gone, call the `update.install` action on the update entity of the repository with the `version` of the release.
+3. Open **BioMatX** in HACS and download it. HACS installs the latest stable release; an older release can be chosen in the download dialog.
 4. Restart Home Assistant.
 
-HACS only announces updates to pre-releases when the "Pre-release" switch of the repository is on. HACS creates that switch entity for every repository it downloads, and it is disabled by default: enable it under **Settings** > **Devices & services** > **HACS**.
+HACS announces new stable releases as updates. Pre-releases (`-rc`, `-beta`) are only announced when the "Pre-release" switch of the repository is on; HACS creates that switch entity for every repository it downloads, disabled by default, under **Settings** > **Devices & services** > **HACS**.
 
 ## Setup
 
