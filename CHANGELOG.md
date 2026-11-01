@@ -6,7 +6,7 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-10-31
+## [1.0.0] - 2026-11-01
 
 First stable release. It fixes the public API (unique_id scheme, entity
 model, config entry keys and version, supported firmwares, Home Assistant

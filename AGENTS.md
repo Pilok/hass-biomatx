@@ -176,7 +176,7 @@ dropped: nothing was ever released under it.
 - **1.0.0-rc.1** (2026-10-24, published): README for both firmwares,
   `quality_scale.yaml`, `release.yml`, brand assets, installation through
   HACS; scope frozen.
-- **1.0.0** (2026-10-31): after one week of soak with no ERROR and no module
+- **1.0.0** (2026-11-01): after one week of soak with no ERROR and no module
   unavailable outside a Home Assistant restart, or with the cause of that
   unavailability identified and treated.
 - **1.1.0**: scenario `button` entities, `biomatx.reset` service (legacy only,
